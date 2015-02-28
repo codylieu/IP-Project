@@ -4,7 +4,7 @@ struct node
     unsigned dist[20];
     unsigned from[20];
 }rt[10];
-int main()
+int distanceVector()
 {
     int costmat[20][20];
     int nodes,i,j,k,count=0;

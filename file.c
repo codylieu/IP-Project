@@ -1,24 +1,44 @@
-#include <stdio.h>
+  #define _GNU_SOURCE
+   #include <stdio.h>
+   #include <stdlib.h>
 
-int readFile(int argc, char *argv[]) {
-int i;
-FILE *fp;
-int c;
+   int readFile(void) {
+       FILE * fp;
+       char * line = NULL;
+       size_t len = 0;
+       ssize_t read;
 
-for (i = 1; i < argc; i++) {
-    fp = fopen(argv[i], "r");
+       fp = fopen("/etc/motd", "r");
+       if (fp == NULL)
+           exit(EXIT_FAILURE);
 
-    if (fp == NULL) {
-        fprint(stderr, "cat: can't open %s\n", argv[i]);
-        continue;
-    }
+// makes each node with first line
+       first = getline(&line, &len, fp);
+       nodeInfo = strtok(first, ":")
+       makeNode(nodeInfo[0], nodeInfo[1]);
 
-    while ((c = getc(fp)) != EOF) {
-        putchar(c);
-    }
+//reads rest of file
+       while ((read = getline(&line, &len, fp)) != -1) {
+           printf("Retrieved line of length %zu :\n", read);
+           printf("%s", line);
 
-    fclose(fp);
+       }
+// end reading file.
+       fclose(fp);
+       if (line)
+           free(line);
+       exit(EXIT_SUCCESS);
+   }
+
+
+void makeNode(char address, int port){
+	typedef struct myNode{
+		char ip_address;
+		int myPort;
+	}
 }
 
-return 0;
+//does stuff with VIP of other nodes
+void nodePath{
+	
 }
