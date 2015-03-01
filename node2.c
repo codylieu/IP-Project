@@ -30,6 +30,8 @@ struct interface {
   struct interface *next;
 };
 
+struct interface *root;
+
 int printInterfaces(struct interface * curr);
 
 int main(int argc, char ** argv) {
@@ -37,7 +39,7 @@ int main(int argc, char ** argv) {
   char * line = NULL;
   size_t len = 0;
   ssize_t read;
-  struct interface *root, *curr;
+  struct interface *curr;
   root = NULL;
 
   if (argc < 2) {
@@ -162,7 +164,7 @@ int createSocket () {
       printf("Invalid Command\n");
     }
     printf("\n");
-    
+
     // if (send(sock, msg, MAX_MSG_LENGTH, 0) < 0) {
     //   perror("Send error:");
     //   return 1;
@@ -192,6 +194,14 @@ int receiveMessage () {
 
 int ifconfig () {
   printf("Response is: %s\n", "ifconfig");
+  struct interface *test = root;
+  int interfaceID = 1;
+  while (test) {
+    char *running = test-> up == 1 ? "up" : "down";
+    printf("%d %s %s\n", interfaceID, test->fromAddress, running);
+    interfaceID++;
+    test = test->next;
+  }
   return 1;
 }
 
@@ -233,11 +243,6 @@ int printInterfaces (struct interface *curr) {
   }
   return 1;
 }
-
-
-
-
-
 
 
 
