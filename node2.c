@@ -22,6 +22,7 @@ char *address;
 int port;
 
 struct interface {
+  int interfaceID;
   char *address;
   int port;
   char *fromAddress;
@@ -63,8 +64,12 @@ int main(int argc, char ** argv) {
   token = strtok(NULL, ":");
   port = atoi(token);
 
+  int interfaceID = 1;
+
   while ((read = getline(&line, &len, fp)) != -1) {
     curr = (struct interface *) malloc(sizeof(struct interface));
+    curr->interfaceID = interfaceID;
+    interfaceID++;
 
     char *splitLine;
     splitLine = strtok(line, ":");
@@ -194,13 +199,11 @@ int receiveMessage () {
 
 int ifconfig () {
   printf("Response is: %s\n", "ifconfig");
-  struct interface *test = root;
-  int interfaceID = 1;
-  while (test) {
-    char *running = test-> up == 1 ? "up" : "down";
-    printf("%d %s %s\n", interfaceID, test->fromAddress, running);
-    interfaceID++;
-    test = test->next;
+  struct interface *curr = root;
+  while (curr) {
+    char *running = curr-> up == 1 ? "up" : "down";
+    printf("%d %s %s\n", curr->interfaceID, curr->fromAddress, running);
+    curr = curr->next;
   }
   return 1;
 }

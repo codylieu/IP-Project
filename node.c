@@ -44,7 +44,7 @@ int client(const char * addr, uint16_t port)
   struct sockaddr_in server_addr;
   char msg[MAX_MSG_LENGTH], reply[MAX_MSG_LENGTH*3];
 
-  if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)/* use UDP */,  {
+  if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)/* use UDP */  {
     perror("Create socket error:");
     return 1;
   }
