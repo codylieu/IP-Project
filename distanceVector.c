@@ -1,48 +1,59 @@
 #include<stdio.h>
-struct node
-{
-    unsigned dist[20];
-    unsigned from[20];
-}rt[10];
-int distanceVector()
-{
-    int costmat[20][20];
-    int nodes,i,j,k,count=0;
-    printf("\nEnter the number of nodes : ");
-    scanf("%d",&nodes);//Enter the nodes
-    printf("\nEnter the cost matrix :\n");
-    for(i=0;i<nodes;i++)
-    {
-        for(j=0;j<nodes;j++)
-        {
-            scanf("%d",&costmat[i][j]);
-            costmat[i][i]=0;
-            rt[i].dist[j]=costmat[i][j];//initialise the distance equal to cost matrix
-            rt[i].from[j]=j;
+
+#define MAX_ROUTES 128 /* max size of routing table*/
+#define MAX_TTL 120 /* seconds until route expires*/
+
+typedef struct {
+    NodeAddr Destination;
+    NodeAddr NextHop;
+    int cost;
+    u_short TTL;
+    } Route;
+
+// make array routingTable
+//make bool array of same size: true means entry is valid, false means not (TTL = 0)
+int numRoutes = 0;
+Route = routingTable[MAX_ROUTES];
+
+void mergeRoute (Route *new){
+    int i;
+    for (i=0;i<numRoutes;i++){
+        --routingTable[i].TTL ;
+        if(routingTable[i].TTL == 0){
+            
+        }
+
+        if(new -> Destination == routingTable[i].Destination){
+            if(new -> cost +1 < routingTable[i].cost){
+                break;
+            }
+            else if(new -> NextHop == routingTable[i].NextHop){
+                break;
+            }
+            else {
+                return;
+            }       
         }
     }
-        do
-        {
-            count=0;
-            for(i=0;i<nodes;i++)//We choose arbitary vertex k and we calculate the direct distance from the node i to k using the cost matrix
-            //and add the distance from k to node j
-            for(j=0;j<nodes;j++)
-            for(k=0;k<nodes;k++)
-                if(rt[i].dist[j]>costmat[i][k]+rt[k].dist[j])
-                {//We calculate the minimum distance
-                    rt[i].dist[j]=rt[i].dist[k]+rt[k].dist[j];
-                    rt[i].from[j]=k;
-                    count++;
-                }
-        }while(count!=0);
-        for(i=0;i<nodes;i++)
-        {
-            printf("\n\n For router %d\n",i+1);
-            for(j=0;j<nodes;j++)
-            {
-                printf("\t\nnode %d via %d Distance %d ",j+1,rt[i].from[j]+1,rt[i].dist[j]);
-            }
+    if(i == numRoutes){
+        /*new route */
+        if(numRoute < MAX_ROUTES){
+            ++numRoutes;
         }
-    printf("\n\n");
-    getch();
+        else{
+            return;
+        }
+    }
+
+    routingTable[i] = *new;
+    routingTable[i].TTL = MAX_TTL;
+    ++routingTable[i].cost;
+
+}
+
+void updateRoutingTable(Route *newRoute, int numNewRoutes){
+    int i;
+    for(i=0; i<numNewRoutes;i++){
+        mergeRoute(&newRoute[i]);
+    }
 }
