@@ -5,22 +5,25 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 int server(uint16_t port);
 int client(const char * addr, uint16_t port);
-int createSocket();
+int handleUserInput();
+void* handleReceiveMessages();
 int ifconfig();
 int routes();
 int up(char * interfaceID);
 int down(char * interfaceID);
-int sendMessage(char * vip, char * message);
+int sendMessage(int sock, char * vip, char * message);
+int findPort(char *vip);
 
+#define MAX_TRANSFER_UNIT (1400)
 #define MAX_MSG_LENGTH (512)
 #define MAX_BACK_LOG (5)
 
 char *address;
 int port;
-
 struct interface {
   int interfaceID;
   char *address;
@@ -30,8 +33,8 @@ struct interface {
   int up;
   struct interface *next;
 };
-
 struct interface *root;
+pthread_t tid;
 
 int printInterfaces(struct interface * curr);
 
@@ -61,9 +64,8 @@ int main(int argc, char ** argv) {
   else {
     address = token;
   }
-  token = strtok(NULL, ":");
+  token = strtok(NULL, "\n");
   port = atoi(token);
-
   int interfaceID = 1;
 
   while ((read = getline(&line, &len, fp)) != -1) {
@@ -79,12 +81,13 @@ int main(int argc, char ** argv) {
     }
     else {
       curr->address = strdup(splitLine);
+      printf("Address test: %s\n", curr->address);
     }
     splitLine = strtok(NULL, " ");
     curr->port = atoi(splitLine);
     splitLine = strtok(NULL, " ");
     curr->fromAddress = strdup(splitLine);
-    splitLine = strtok(NULL, " ");
+    splitLine = strtok(NULL, "\n");
     curr->toAddress = strdup(splitLine);
     curr->up = 1;
     if (root == NULL) {
@@ -103,34 +106,50 @@ int main(int argc, char ** argv) {
   if (line)
     free(line);
 
-  printf("Reached\n");
-  return createSocket();
+  pthread_create(&tid, NULL, &handleReceiveMessages, NULL);
+  return handleUserInput();
   exit(EXIT_SUCCESS);
 }
 
-int createSocket () {
-  int sock;
-  struct sockaddr_in server_addr;
+void* handleReceiveMessages () {
+  struct sockaddr_in sin, from;
+  socklen_t fromLen = sizeof(from);
+  char buf[MAX_TRANSFER_UNIT];
+  int s;
+
+  bzero((char *)&sin, sizeof(sin));
+  sin.sin_family = AF_INET;
+  sin.sin_addr.s_addr = INADDR_ANY;
+  sin.sin_port = htons(port);
+
+  if ((s = socket(PF_INET, SOCK_DGRAM, 0)) < 0) {
+    perror("simplex-talk: socket");
+    exit(1);
+  }
+  if ((bind(s, (struct sockaddr *)&sin, sizeof(sin))) < 0) {
+    perror("simplex-talk: bind");
+    exit(1);
+  }
+
+  while(1) {
+    if (recvfrom(s, buf, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&from, &fromLen) > 0) {
+      printf("Received Message: %s\n", buf);
+    }
+  }
+  return NULL;
+}
+
+int handleUserInput () {
+  int sock, recv_len;
   char msg[MAX_MSG_LENGTH], reply[MAX_BACK_LOG * 3];
+  char buf[MAX_TRANSFER_UNIT];
 
-  // if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-  //   perror("Create socket error:");
-  //   return 1;
-  // }
+  if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+    perror("simplex-talk: socket");
+    exit(1);
+  }
 
-  // printf("Socket created\n");
-  // server_addr.sin_addr.s_addr = inet_addr(address);
-  // server_addr.sin_family = AF_INET;
-  // server_addr.sin_port = htons(port);
-
-  // if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-  //   perror("Connect error:");
-  //   return 1;
-  // }
-
-  // printf("Connected to server %s:%d\n", address, port);
-
-  int recv_len = 0;
+  recv_len = 0;
   while (1) {
     fflush(stdin);
     printf("Enter command:\n");
@@ -163,42 +182,31 @@ int createSocket () {
       char *vip = strdup(splitMsg);
       splitMsg = strtok(NULL, "");
       char *message = strdup(splitMsg);
-      sendMessage(vip, message);
+      sendMessage(sock, vip, message);
     }
     else {
       printf("Invalid Command\n");
     }
     printf("\n");
-
-    // if (send(sock, msg, MAX_MSG_LENGTH, 0) < 0) {
-    //   perror("Send error:");
-    //   return 1;
-    // }
-    // recv_len = read(sock, reply, MAX_MSG_LENGTH * 3);
-    // if (recv_len < 0) {
-    //   perror("Recv error:");
-    //   return 1;
-    // }
-    // reply[recv_len] = 0;
-    // printf("Server reply:\n%s\n", reply);
-    // memset(reply, 0, sizeof(reply));
   }
-  // close(sock);
-  return 0;
-}
-
-int sendMessage (char * vip, char * message) {
-  printf("VIP: %s\n", vip);
-  printf("Message: %s\n", message);
+  close(sock);
   return 1;
 }
 
-int receiveMessage () {
+int sendMessage (int sock, char * vip, char * message) {
+  struct sockaddr_in sout;
+  socklen_t soutLen = sizeof(sout);
+  sout.sin_family = AF_INET;
+  sout.sin_addr.s_addr = inet_addr(address);
+  sout.sin_port = htons(findPort(vip));
+
+  if (sendto(sock, message, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&sout, soutLen) < 0) {
+    perror("Send error");
+  }
   return 1;
 }
 
 int ifconfig () {
-  printf("Response is: %s\n", "ifconfig");
   struct interface *curr = root;
   while (curr) {
     char *running = curr-> up == 1 ? "up" : "down";
@@ -233,6 +241,22 @@ int down (char *interfaceID) {
 
 int update () {
   return 1;
+}
+
+int calculateDistanceVector () {
+  return 1;
+}
+
+// find associated port given vip
+int findPort (char *vip) {
+  struct interface *curr = root;
+  while (curr) {
+    if (strcmp(curr->toAddress, vip) == 0) {
+      return curr->port;
+    }
+    curr = curr->next;
+  }
+  return -1;
 }
 
 // Used for debugging
