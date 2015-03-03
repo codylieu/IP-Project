@@ -38,6 +38,7 @@ pthread_t tid;
 
 int printInterfaces(struct interface * curr);
 
+// Have to compile with "gcc -pthread -o node node.c" on Ubuntu
 int main(int argc, char ** argv) {
   FILE * fp;
   char * line = NULL;
@@ -247,7 +248,7 @@ int calculateDistanceVector () {
   return 1;
 }
 
-// find associated port given vip
+// Find associated port given vip
 int findPort (char *vip) {
   struct interface *curr = root;
   while (curr) {
