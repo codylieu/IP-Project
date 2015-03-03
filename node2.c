@@ -195,11 +195,25 @@ int handleUserInput () {
 }
 
 int sendMessage (int sock, char * vip, char * message) {
+  int samePort = 0;
+  struct interface *curr = root;
+  while (curr) {
+    if (strcmp(vip, curr->fromAddress) == 0) {
+      samePort = 1;
+    }
+    curr = curr->next;
+  }
+
   struct sockaddr_in sout;
   socklen_t soutLen = sizeof(sout);
   sout.sin_family = AF_INET;
   sout.sin_addr.s_addr = inet_addr(address);
-  sout.sin_port = htons(findPort(vip));
+  if (samePort) {
+    sout.sin_port = htons(port);
+  }
+  else {
+    sout.sin_port = htons(findPort(vip));
+  }
 
   if (sendto(sock, message, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&sout, soutLen) < 0) {
     perror("Send error");
