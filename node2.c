@@ -17,10 +17,15 @@ int up(char * interfaceID);
 int down(char * interfaceID);
 int sendMessage(int sock, char * vip, char * message);
 int findPort(char *vip);
+void* sendRoutingRequest();
+int sendRoutingResponse();
+int findNextHopInterfaceID(char *NextHop);
 
 #define MAX_TRANSFER_UNIT (1400)
 #define MAX_MSG_LENGTH (512)
 #define MAX_BACK_LOG (5)
+#define MAX_ROUTES 128 /* maximum size of routing table */
+#define MAX_TTL 120 /* time (in seconds) until route expires */
 
 char *address;
 int port;
@@ -34,11 +39,30 @@ struct interface {
   struct interface *next;
 };
 struct interface *root;
-pthread_t tid;
+pthread_t tid[2];
+
+typedef struct {
+  char *Destination; /* address of destination */
+  char *NextHop; /* address of next hop */
+  int cost; /* distance metric */
+  u_short TTL; /* time to live */
+} Route;
+
+int numRoutes = 0;
+Route routingTable[MAX_ROUTES];
 
 int printInterfaces(struct interface * curr);
+void mergeRoute(Route *new);
+void updateRoutingTable(Route *newRoute, int numNewRoutes);
 
-// Have to compile with "gcc -pthread -o node node.c" on Ubuntu
+// uint16_t command; // 1 for a request of routing info and 2 for a response
+// uint16_t num_entries; // will not exceed 64 and must be 0 for a request command
+// struct {
+//   uint32_t cost;
+//   uint32_t address;
+// } entries[num_entries];
+
+// Create a make file that compiles with "gcc -pthread -o node node.c" for Ubuntu
 int main(int argc, char ** argv) {
   FILE * fp;
   char * line = NULL;
@@ -107,9 +131,82 @@ int main(int argc, char ** argv) {
   if (line)
     free(line);
 
-  pthread_create(&tid, NULL, &handleReceiveMessages, NULL);
+  pthread_create(&tid[0], NULL, &handleReceiveMessages, NULL);
+  pthread_create(&tid[1], NULL, &sendRoutingRequest,NULL);
   return handleUserInput();
   exit(EXIT_SUCCESS);
+}
+
+void mergeRoute (Route *new) {
+  int i;
+
+  for (i = 0; i < numRoutes; ++i) {
+    if (new->Destination == routingTable[i].Destination) {
+      if (new->cost + 1 < routingTable[i].cost) {
+        /* Found a better route: */
+        break;
+      }
+      else if (new->NextHop == routingTable[i].NextHop) {
+        /* Metric for current next-hop may have changed: */
+        break;
+      }
+      else {
+        /* Route is uninteresting---just ignore it */
+        return;
+      }
+    }
+  }
+  if (i == numRoutes) {
+    /* This is a completely new route; is there room for it? */
+    if (numRoutes < MAX_ROUTES) {
+      ++numRoutes;
+    }
+    else {
+      /* can't fit this route in table so give up */
+      return;
+    }
+  }
+  routingTable[i] = *new;
+  /* Reset TTL */
+  routingTable[i].TTL = MAX_TTL;
+  /* Account for hop to get to next node */
+  ++routingTable[i].cost;
+}
+
+void updateRoutingTable (Route *newRoute, int numNewRoutes) {
+  int i;
+  for (i = 0; i < numNewRoutes; ++i) {
+    mergeRoute(&newRoute[i]);
+  }
+}
+
+void* sendRoutingRequest () {
+  // Initialize routing table by going through interfaces linked list;
+  struct interface *curr = root;
+  while (curr) {
+    Route *fromRoute = malloc(sizeof(Route));
+    fromRoute->Destination = strdup(curr->fromAddress);
+    fromRoute->NextHop = strdup(curr->fromAddress);
+    fromRoute->cost = 0;
+    fromRoute->TTL = MAX_TTL;
+    routingTable[numRoutes] = *fromRoute;
+    numRoutes++;
+
+    Route *toRoute = malloc(sizeof(Route));
+    toRoute->Destination = strdup(curr->toAddress);
+    toRoute->NextHop = strdup(curr->toAddress);
+    toRoute->cost = 1;
+    toRoute->TTL = MAX_TTL;
+    routingTable[numRoutes] = *toRoute;
+    numRoutes++;
+    curr = curr->next;
+  }
+
+  // Send requests for updates
+  while (1) {
+
+  }
+  return NULL;
 }
 
 void* handleReceiveMessages () {
@@ -231,8 +328,14 @@ int ifconfig () {
   return 1;
 }
 
+// Remove printing of own from address
 int routes () {
   printf("Response is: %s\n", "routes");
+  int i;
+  for(i = 0; i < numRoutes; ++i) {
+    int id = findNextHopInterfaceID(routingTable[i].NextHop);
+    printf("%s %d %d\n", routingTable[i].Destination, id, routingTable[i].cost);
+  }
   return 1;
 }
 
@@ -268,6 +371,19 @@ int findPort (char *vip) {
   while (curr) {
     if (strcmp(curr->toAddress, vip) == 0) {
       return curr->port;
+    }
+    curr = curr->next;
+  }
+  return -1;
+}
+
+// Find interface ID for Next Hop
+int findNextHopInterfaceID (char *NextHop) {
+  struct interface *curr = root;
+  while (curr) {
+    if (strcmp(curr->fromAddress, NextHop) == 0 || 
+        strcmp(curr->toAddress, NextHop) == 0) {
+      return curr->interfaceID;
     }
     curr = curr->next;
   }
