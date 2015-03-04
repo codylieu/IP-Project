@@ -17,9 +17,10 @@ int up(char * interfaceID);
 int down(char * interfaceID);
 int sendMessage(int sock, char * vip, char * message);
 int findPort(char *vip);
-void* sendRoutingRequest();
+void* sendRoutingUpdates();
 int sendRoutingResponse();
 int findNextHopInterfaceID(char *NextHop);
+int initializeRoutingTable();
 
 #define MAX_TRANSFER_UNIT (1400)
 #define MAX_MSG_LENGTH (512)
@@ -39,6 +40,7 @@ struct interface {
   struct interface *next;
 };
 struct interface *root;
+
 pthread_t tid[2];
 
 typedef struct {
@@ -54,14 +56,6 @@ Route routingTable[MAX_ROUTES];
 int printInterfaces(struct interface * curr);
 void mergeRoute(Route *new);
 void updateRoutingTable(Route *newRoute, int numNewRoutes);
-
-// Packet format, not sure where this goes yet
-// uint16_t command; // 1 for a request of routing info and 2 for a response
-// uint16_t num_entries; // will not exceed 64 and must be 0 for a request command
-// struct {
-//   uint32_t cost;
-//   uint32_t address;
-// } entries[num_entries];
 
 // Create a make file that compiles with "gcc -pthread -o node node.c" for Ubuntu
 int main(int argc, char ** argv) {
@@ -81,6 +75,7 @@ int main(int argc, char ** argv) {
   if (fp == NULL)
     exit(EXIT_FAILURE);
 
+  // Sets global port and address
   read = getline(&line, &len, fp);
   char *token;
   token = strtok(line, ":");
@@ -92,8 +87,9 @@ int main(int argc, char ** argv) {
   }
   token = strtok(NULL, "\n");
   port = atoi(token);
-  int interfaceID = 1;
 
+  // Creates linked list of interfaces
+  int interfaceID = 1;
   while ((read = getline(&line, &len, fp)) != -1) {
     curr = (struct interface *) malloc(sizeof(struct interface));
     curr->interfaceID = interfaceID;
@@ -132,22 +128,29 @@ int main(int argc, char ** argv) {
   if (line)
     free(line);
 
+  // Initializes routing table with information contained in txt file
+  // This should be later encapsulated into routing thread as the first call
+  // Or this should encapsulate the routing thread, not sure yet
+  initializeRoutingTable();
+
   pthread_create(&tid[0], NULL, &handleReceiveMessages, NULL);
-  pthread_create(&tid[1], NULL, &sendRoutingRequest,NULL);
+  // pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
   return handleUserInput();
+
   exit(EXIT_SUCCESS);
 }
 
+// Code from the book
 void mergeRoute (Route *new) {
   int i;
 
   for (i = 0; i < numRoutes; ++i) {
-    if (new->Destination == routingTable[i].Destination) {
+    if (strcmp(new->Destination, routingTable[i].Destination) == 0) {
       if (new->cost + 1 < routingTable[i].cost) {
         /* Found a better route: */
         break;
       }
-      else if (new->NextHop == routingTable[i].NextHop) {
+      else if (strcmp(new->NextHop, routingTable[i].NextHop) == 0) {
         /* Metric for current next-hop may have changed: */
         break;
       }
@@ -174,6 +177,8 @@ void mergeRoute (Route *new) {
   ++routingTable[i].cost;
 }
 
+// Code from the book
+// After nodes, receive RIP packets from neighbors, call this for each entry to update routing table
 void updateRoutingTable (Route *newRoute, int numNewRoutes) {
   int i;
   for (i = 0; i < numNewRoutes; ++i) {
@@ -181,35 +186,115 @@ void updateRoutingTable (Route *newRoute, int numNewRoutes) {
   }
 }
 
-void* sendRoutingRequest () {
-  // Initialize routing table by going through interfaces linked list;
-  struct interface *curr = root;
-  while (curr) {
-    Route *fromRoute = malloc(sizeof(Route));
-    fromRoute->Destination = strdup(curr->fromAddress);
-    fromRoute->NextHop = strdup(curr->fromAddress);
-    fromRoute->cost = 0;
-    fromRoute->TTL = MAX_TTL;
-    routingTable[numRoutes] = *fromRoute;
-    numRoutes++;
+// Used when RIP packet is received, will need to put values into a form
+// that updateRoutingTable can use 
+int deserializePacket (unsigned char * packetBuffer) {
+  int i;
 
-    Route *toRoute = malloc(sizeof(Route));
-    toRoute->Destination = strdup(curr->toAddress);
-    toRoute->NextHop = strdup(curr->toAddress);
-    toRoute->cost = 1;
-    toRoute->TTL = MAX_TTL;
-    routingTable[numRoutes] = *toRoute;
-    numRoutes++;
-    curr = curr->next;
+  uint16_t dCommand = 0;
+  dCommand |= packetBuffer[0] << 8;
+  dCommand |= packetBuffer[1];
+  printf("Deserialized Command: %hu\n", dCommand);
+
+  packetBuffer = packetBuffer + 2;
+
+  uint16_t dNum_entries = 0;
+  dNum_entries |= packetBuffer[0] << 8;
+  dNum_entries |= packetBuffer[1];
+  printf("Deserialized Num Entries: %hu\n", dNum_entries);
+  packetBuffer = packetBuffer + 2;
+
+  for(i = 0; i < dNum_entries; ++i) {
+    uint32_t dCost = 0;
+    dCost |= packetBuffer[0] << 24;
+    dCost |= packetBuffer[1] << 16;
+    dCost |= packetBuffer[2] << 8;
+    dCost |= packetBuffer[3];
+    packetBuffer = packetBuffer + 4;
+    printf("Deserialized Cost %d: %u\n", i, dCost);
+    uint32_t dAddress = 0;
+    dAddress |= packetBuffer[0] << 24;
+    dAddress |= packetBuffer[1] << 16;
+    dAddress |= packetBuffer[2] << 8;
+    dAddress |= packetBuffer[3];
+    packetBuffer = packetBuffer + 4;
+    printf("Deserialized Address %d: %u\n", i, dAddress);
   }
+  return 1;
+}
 
-  // Send requests for updates
+// Sends RIP packets to all interfaces
+void* sendRoutingUpdates () {
   while (1) {
+    int i, j;
 
+    // Packet format
+    uint16_t command; // command will be 1 for request of routing info and 2 for a response
+    uint16_t num_entries; // will not exceed 64 and must be 0 for a request
+    struct {
+      uint32_t cost; // will not exceed 16 -> define infinity to be 16
+      uint32_t address; // IPv4 address
+    } entries[num_entries];
+
+    // Hard code in 2 for now, will also have to support request later.
+    command = 2;
+    num_entries = numRoutes;
+    printf("Command: %hu\n", command);
+    printf("Num Entries: %hu\n", num_entries);
+    for(i = 0; i < num_entries; ++i) {
+      entries[i].cost = routingTable[i].cost;
+      printf("Cost %d: %u\n", i, entries[i].cost);
+      inet_pton(AF_INET, routingTable[i].Destination, &entries[i].address);
+      printf("Address %d: %u\n", i, entries[i].address);
+    }
+
+    // Serialize packet info into buffer
+    unsigned char *packetBuffer, *ptr;
+    packetBuffer = malloc(2*sizeof(uint16_t) + num_entries*sizeof(entries));
+    ptr = malloc(2*sizeof(uint16_t) + num_entries*sizeof(entries));
+    ptr = packetBuffer;
+
+    ptr[0] = command >> 8;
+    ptr[1] = command;    
+    ptr = ptr + 2;
+
+    ptr[0] = num_entries >> 8;
+    ptr[1] = num_entries;
+    ptr = ptr + 2;
+
+    for(i = 0; i < num_entries; ++i) {
+      ptr[0] = entries[i].cost >> 24;
+      ptr[1] = entries[i].cost >> 16;
+      ptr[2] = entries[i].cost >> 8;
+      ptr[3] = entries[i].cost;
+      ptr = ptr + 4;
+
+      ptr[0] = entries[i].address >> 24;
+      ptr[1] = entries[i].address >> 16;
+      ptr[2] = entries[i].address >> 8;
+      ptr[3] = entries[i].address;
+      ptr = ptr + 4;
+    }
+
+    // Test to see that the values are serialized and deserialized correctly
+    // deserializePacket(packetBuffer);
+
+    // Should now send packetBuffer to all immediate neighbors so that they can updateRoutingTables
+    struct interface *curr = root;
+    while (curr) {
+      // Do I use the original socket or create a new socket?
+      // sendMessage();
+      curr = curr->next;
+    }
+
+    sleep(5);
   }
   return NULL;
 }
 
+// Prints out messages
+// Will eventually have to read header and handle forwarding
+// Not sure if I should handle RIP packets here or spawn a new thread
 void* handleReceiveMessages () {
   struct sockaddr_in sin, from;
   socklen_t fromLen = sizeof(from);
@@ -238,6 +323,7 @@ void* handleReceiveMessages () {
   return NULL;
 }
 
+// Command line interface for users, supports commands
 int handleUserInput () {
   int sock, recv_len;
   char msg[MAX_MSG_LENGTH], reply[MAX_BACK_LOG * 3];
@@ -265,7 +351,9 @@ int handleUserInput () {
     else if (strcmp(splitMsg, "ifconfig") == 0) {
       ifconfig();      
     }
-    else if (strcmp(splitMsg, "routes") == 0) {
+    // Documentation is unclear on whether command is "routes" or "route"
+    else if (strcmp(splitMsg, "routes") == 0 ||
+             strcmp(splitMsg, "route") == 0) {
       routes();
     }
     else if (strcmp(splitMsg, "up") == 0) {
@@ -292,6 +380,34 @@ int handleUserInput () {
   return 1;
 }
 
+// Initialize routing table by going through linked list of interfaces;
+int initializeRoutingTable() {
+  struct interface *curr = root;
+  while (curr) {
+    Route *fromRoute = malloc(sizeof(Route));
+    fromRoute->Destination = strdup(curr->fromAddress);
+    fromRoute->NextHop = strdup(curr->fromAddress);
+    fromRoute->cost = 0;
+    fromRoute->TTL = MAX_TTL;
+    routingTable[numRoutes] = *fromRoute;
+    numRoutes++;
+
+    Route *toRoute = malloc(sizeof(Route));
+    toRoute->Destination = strdup(curr->toAddress);
+    toRoute->NextHop = strdup(curr->toAddress);
+    toRoute->cost = 1;
+    toRoute->TTL = MAX_TTL;
+    routingTable[numRoutes] = *toRoute;
+    numRoutes++;
+    curr = curr->next;
+  }
+  return 1;
+}
+
+/* Supported Commands */
+
+// Not sure if this should be expanded later to support RIP packets and forwarding
+// It probably should, in which case, we might need to change function signature
 int sendMessage (int sock, char * vip, char * message) {
   int samePort = 0;
   struct interface *curr = root;
@@ -329,7 +445,7 @@ int ifconfig () {
   return 1;
 }
 
-// Remove printing of own from address
+// Remove printing of own from address, currently leave it in for testing
 int routes () {
   printf("Response is: %s\n", "routes");
   int i;
@@ -340,6 +456,7 @@ int routes () {
   return 1;
 }
 
+// Up and Down will eventually have to handle triggered updates I think
 int up (char *interfaceID) {
   if (interfaceID == NULL) {
     printf("No Interface specified\n");
@@ -358,13 +475,7 @@ int down (char *interfaceID) {
   return 1;
 }
 
-int update () {
-  return 1;
-}
-
-int calculateDistanceVector () {
-  return 1;
-}
+/* Helper functions */
 
 // Find associated port given vip
 int findPort (char *vip) {
