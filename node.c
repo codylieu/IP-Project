@@ -253,7 +253,7 @@ void* sendRoutingUpdates () {
     // Need to get copy of the payload in order for checksum to work properly
     // Getting a copy of the payload
     unsigned char* ripbuf, *ripptr;
-    ripbuf = malloc(2*sizeof(uint16_t) + num_entries*sizeof(entries));
+    ripbuf = malloc(2*sizeof(uint16_t) + 2*num_entries*sizeof(uint32_t));
     ripptr = ripbuf;
     // Adding entries
     ripptr[0] = command >> 8;
@@ -366,6 +366,7 @@ void* sendRoutingUpdates () {
       curr = curr->next;
     }
     // free(tempPtr);
+    free(ripbuf);
     free(packetBuffer);
     sleep(10);
   }
