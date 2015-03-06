@@ -21,7 +21,7 @@ int sendRoutingResponse();
 int findNextHopInterfaceID(char *NextHop);
 int initializeRoutingTable();
 void *packageData(int sock, char *vip, unsigned char *message, int protocol);
-int checkDestinationAddress();
+int checkDestinationAddress(uint32_t ddaddr);
 
 #define MAX_TRANSFER_UNIT (1400)
 #define MAX_MSG_LENGTH (512)
@@ -68,15 +68,15 @@ struct iphdr ipReceived;
 
 int numRoutes = 0;
 Route routingTable[MAX_ROUTES];
-
-
-
 int sock2;
-
-
 int printInterfaces(struct interface * curr);
 void mergeRoute(Route *new);
 void updateRoutingTable(Route *newRoute, int numNewRoutes);
+
+struct deserializedTuple {
+  struct iphdr ipReceived;
+  unsigned char * deserializedPacketPtr;
+};
 
 // Create a make file that compiles with "gcc -pthread -o node node.c" for Ubuntu
 int main(int argc, char ** argv) {
@@ -331,8 +331,9 @@ void* sendRoutingUpdates () {
   return NULL;
 }
 
-// Deserializes IP packets used in forwarding
-unsigned char *deserializeIPPacket(unsigned char * packetBuffer) {
+// deserializes IP packets used in forwarding
+struct deserializedTuple deserializeIPPacket(unsigned char * packetBuffer) {
+  struct deserializedTuple dTuple;
   struct iphdr ip;
 
   // The 'd' before variable names indicates deserialized
@@ -400,10 +401,11 @@ unsigned char *deserializeIPPacket(unsigned char * packetBuffer) {
   ip.check = dcheck;              //Checksum
   ip.saddr = dsaddr;              //Source Address
   ip.daddr = ddaddr;              //Destination Address (vip used to get ports 
-                                  //in routing tables, so forward vip along)
-  ipReceived = ip;
+
+  dTuple.ipReceived = ip;
+  dTuple.deserializedPacketPtr = packetBuffer;
   
-  return packetBuffer;
+  return dTuple;
 }
 
 int send_rip_packets () {
@@ -607,7 +609,9 @@ void* handleReceiveMessages () {
 
   while(1) {
     if (recvfrom(s, buf, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&from, &fromLen) > 0) {
-      unsigned char *ptr = deserializeIPPacket(buf);
+      struct deserializedTuple dTuple = deserializeIPPacket(buf);
+      unsigned char *ptr = dTuple.deserializedPacketPtr;
+      struct iphdr ipReceived = dTuple.ipReceived;
       if(ipReceived.protocol == 0)  {
         // char *message = deserializeMessage(ptr, fromLen);
         printf("Received Message: %s\n", ptr);
@@ -622,38 +626,38 @@ void* handleReceiveMessages () {
         printf("RECEIVED: Deserialized Command: %hu\n", command);
         // if (command == 1 || command == 2) {
           // Format everything to a Route and then call update routes
-          i = i + 2;
-          uint16_t num_entries = 0;
-          num_entries |= ptr[i] << 8;
-          num_entries |= ptr[i + 1];
-          i = i + 2;
-          printf("RECEIVED: Deserialized Num Entries: %hu\n", num_entries);
-          Route newRoutes[num_entries];
-          for(j = 0; j < num_entries; ++j) {
-            Route tempRoute;
-            uint32_t cost = 0;
-            cost |= ptr[i] << 24;
-            cost |= ptr[i + 1] << 16;
-            cost |= ptr[i + 2] << 8;
-            cost |= ptr[i + 3];
-            i = i + 4;
-            printf("RECEIVED Cost %d: %u\n", j, cost);
-            uint32_t address = 0;
-            address |= ptr[i] << 24;
-            address |= ptr[i + 1] << 16;
-            address |= ptr[i + 2] << 8;
-            address |= ptr[i + 3];
-            i = i + 4;
-            printf("RECEIVED Address %d: %u\n", j, address);
+        i = i + 2;
+        uint16_t num_entries = 0;
+        num_entries |= ptr[i] << 8;
+        num_entries |= ptr[i + 1];
+        i = i + 2;
+        printf("RECEIVED: Deserialized Num Entries: %hu\n", num_entries);
+        Route newRoutes[num_entries];
+        for(j = 0; j < num_entries; ++j) {
+          Route tempRoute;
+          uint32_t cost = 0;
+          cost |= ptr[i] << 24;
+          cost |= ptr[i + 1] << 16;
+          cost |= ptr[i + 2] << 8;
+          cost |= ptr[i + 3];
+          i = i + 4;
+          printf("RECEIVED Cost %d: %u\n", j, cost);
+          uint32_t address = 0;
+          address |= ptr[i] << 24;
+          address |= ptr[i + 1] << 16;
+          address |= ptr[i + 2] << 8;
+          address |= ptr[i + 3];
+          i = i + 4;
+          printf("RECEIVED Address %d: %u\n", j, address);
             
-            // Building the Routes
-            // struct in_addr temp;
-            // temp.s_addr = address;
-            // inet_ntop(AF_INET, &temp, tempRoute.Destination, INET_ADDRSTRLEN);
-            // tempRoute.NextHop= ;
-            // tempRoute.cost = cost;
-            // tempRoute.TTL = MAX_TTL;
-            // newRoutes[j] = tempRoute;
+          // Building the Routes
+          struct in_addr temp;
+          temp.s_addr = address;
+          inet_ntop(AF_INET, &temp, tempRoute.Destination, INET_ADDRSTRLEN);
+          tempRoute.NextHop = ipReceived.saddr;
+          tempRoute.cost = cost;
+          tempRoute.TTL = MAX_TTL;
+          newRoutes[j] = tempRoute;
           }
           // updateRoutingTable(newRoutes, num_entries);
         // }
@@ -671,7 +675,7 @@ void* handleReceiveMessages () {
         // Need to parse through routingTable to see if the destination address
         // received matches a destination address in the routingTable with cost 0.
         // If so, then you have arrived at your destination! If not, then forward
-        if (checkDestinationAddress() == 0)  {
+        if (checkDestinationAddress(ipReceived.daddr) == 0)  {
           puts("need to forward");
           
           int sock;
@@ -874,10 +878,10 @@ int down (char *interfaceID) {
 /* Helper functions */
 
 // Find if the received destination address matches an address with cost 0 in the routingTable
-int checkDestinationAddress() {
+int checkDestinationAddress(uint32_t daddr) {
   int i;
   for(i = 0; i < numRoutes; i++)  {
-    if(ipReceived.daddr == inet_addr(routingTable[i].Destination) && routingTable[i].cost == 0) {
+    if(daddr == inet_addr(routingTable[i].Destination) && routingTable[i].cost == 0) {
       return 1;
     }
   }
