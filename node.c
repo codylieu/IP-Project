@@ -801,6 +801,7 @@ int sendMessage (int s, char * vip, unsigned char * message) {
     exit(1);
   }
   */
+
   int samePort = 0;
   struct interface *curr = root;
   while (curr) {
