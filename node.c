@@ -21,6 +21,7 @@ int sendRoutingResponse();
 int findNextHopInterfaceID(char *NextHop);
 int initializeRoutingTable();
 void *packageData(int sock, char *vip, char *message, int protocol);
+int checkDestinationAddress();
 
 #define MAX_TRANSFER_UNIT (1400)
 #define MAX_MSG_LENGTH (512)
@@ -323,7 +324,7 @@ void* sendRoutingUpdates () {
     // free(ptr);
     // free(packetBuffer);
 
-    sleep(20);
+    sleep(5);
   }
   return NULL;
 }
@@ -610,7 +611,10 @@ void* handleReceiveMessages () {
 
       }
       else  {
-        if (ipReceived.daddr != inet_addr(curr->fromAddress))  {
+        // Need to parse through routingTable to see if the destination address
+        // received matches a destination address in the routingTable with cost 0.
+        // If so, then you have arrived at your destination! If not, then forward
+        if (checkDestinationAddress() == 0)  {
           puts("need to forward");
           
           int sock;
@@ -684,7 +688,7 @@ void* handleReceiveMessages () {
       }
       */
     }
-    sleep(10);
+    sleep(5);
   }
   close(s);
   return NULL;
@@ -868,6 +872,17 @@ int down (char *interfaceID) {
 }
 
 /* Helper functions */
+
+// Find if the received destination address matches an address with cost 0 in the routingTable
+int checkDestinationAddress() {
+  int i;
+  for(i = 0; i < numRoutes; i++)  {
+    if(ipReceived.daddr == inet_addr(routingTable[i].Destination) && routingTable[i].cost == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
 
 // Find associated port given vip
 uint16_t findPort (char *vip) {
