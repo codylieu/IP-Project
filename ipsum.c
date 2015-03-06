@@ -6,7 +6,7 @@
 ************************************************************/
 #include <inttypes.h>
 
-int ip_sum(char* packet, int n) {
+int ip_sum(unsigned char* packet, int n) {
   uint16_t *p = (uint16_t*)packet;
   uint16_t answer;
   long sum = 0;

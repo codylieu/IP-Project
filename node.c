@@ -245,6 +245,34 @@ void* sendRoutingUpdates () {
     // ptr = serializeIp(vip, 200, size, ptr);
     struct interface *curr = root;
 
+    // Getting a copy of the payload
+    unsigned char* ripbuf, *ripptr;
+    ripbuf = malloc(2*sizeof(uint16_t) + num_entries*sizeof(entries));
+    ripptr = malloc(2*sizeof(uint16_t) + num_entries*sizeof(entries));
+    ripptr = ripbuf;
+    // Adding entries
+    ripptr[0] = command >> 8;
+    ripptr[1] = command;    
+    ripptr = ripptr + 2;
+   
+    ripptr[0] = num_entries >> 8;
+    ripptr[1] = num_entries;
+    ripptr = ripptr + 2;
+   
+    for(j = 0; j < num_entries; ++j) {
+      ripptr[0] = entries[j].cost >> 24;
+      ripptr[1] = entries[j].cost >> 16;
+      ripptr[2] = entries[j].cost >> 8;
+      ripptr[3] = entries[j].cost;
+      ripptr = ripptr + 4;
+   
+      ripptr[0] = entries[j].address >> 24;
+      ripptr[1] = entries[j].address >> 16;
+      ripptr[2] = entries[j].address >> 8;
+      ripptr[3] = entries[j].address;
+      ripptr = ripptr + 4;
+    }
+
     while(curr) {
       struct iphdr ip;
       ip.tos = 0;                                 //Type of Service
@@ -253,10 +281,11 @@ void* sendRoutingUpdates () {
       ip.frag_off = 0;                            //Fragmentation Offset Field
       ip.ttl = MAX_TTL;                           //Time to Live
       ip.protocol = 200;                          //Protocol
-      ip.check = 0;                               //Checksum
+      ip.check = ip_sum(ripbuf,2);                //Checksum
       ip.saddr = inet_addr(curr->fromAddress);    //Source Address
       ip.daddr = inet_addr(curr->toAddress);      //Destination Address (vip used to get ports in routing tables, so forward vip along)
 
+      // Adding iphdr
       ptr[0] = ip.tos;
       ptr = ptr + 1;
 
@@ -292,11 +321,9 @@ void* sendRoutingUpdates () {
       ptr[1] = ip.daddr >> 16;
       ptr[2] = ip.daddr >> 8;
       ptr[3] = ip.daddr;
-      ptr = ptr + 4;
+      ptr = ptr + 4;      
 
-      
-
-
+      // Adding entries
       ptr[0] = command >> 8;
       ptr[1] = command;    
       ptr = ptr + 2;
@@ -423,7 +450,7 @@ int send_rip_packets () {
 // }
 
 // This serializes the iphdr
-unsigned char *serializeIp(char *vip, int protocol, int size, unsigned char *ptr) {
+unsigned char *serializeIP(char *vip, int protocol, int size, unsigned char *ptr, unsigned char *message) {
   
   struct iphdr ip;
   struct interface *curr = root;  
@@ -433,9 +460,11 @@ unsigned char *serializeIp(char *vip, int protocol, int size, unsigned char *ptr
   ip.frag_off = 0;                  //Fragmentation Offset Field
   ip.ttl = MAX_TTL;                 //Time to Live
   ip.protocol = protocol;           //Protocol
-  ip.check = 0;                     //Checksum
+  ip.check = ip_sum(message,2);     //Checksum
   ip.saddr = inet_addr(findSourceVip());  //Source Address
   ip.daddr = inet_addr(vip);        //Destination Address (vip used to get ports in routing tables, so forward vip along)
+
+  printf("checksum: %u", ip.check);
 
   ptr[0] = ip.tos;
   ptr = ptr + 1;
@@ -563,7 +592,7 @@ void *packageData(int sock, char *vip, unsigned char *message, int protocol)  {
   ptr = packetBuffer;
 
   // Put iphdr into packet buffer
-  ptr = serializeIp(vip, protocol, size, ptr);
+  ptr = serializeIP(vip, protocol, size, ptr, message);
 
   // Put RIP info into packet buffer (if needed)
   if (protocol == 200)  {
@@ -613,6 +642,8 @@ void* handleReceiveMessages () {
       struct deserializedTuple dTuple = deserializeIPPacket(buf);
       unsigned char *ptr = dTuple.deserializedPacketPtr;
       struct iphdr ipReceived = dTuple.ipReceived;
+      uint16_t calculatedChecksum = ip_sum(ptr,2);
+      if(ipReceived.check == calculatedChecksum) {
       if(ipReceived.protocol == 0)  {
         // char *message = deserializeMessage(ptr, fromLen);
         printf("Received Message: %s\n", ptr);
@@ -662,7 +693,7 @@ void* handleReceiveMessages () {
           tempRoute.cost = cost;
           tempRoute.TTL = MAX_TTL;
           newRoutes[j] = tempRoute;
-          }
+        }
         // updateRoutingTable(newRoutes, num_entries);
         // }
         // else if (command == 0) {
@@ -695,9 +726,12 @@ void* handleReceiveMessages () {
         }
         else  {
           // unsigned char *message = deserializeMessage(ptr, fromLen);
+          printf("checksum: %u\n", calculatedChecksum);
           printf("Received: %s\n", ptr);
         }
       }
+      }
+
     }
     sleep(5);
   }
