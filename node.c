@@ -30,6 +30,7 @@ char *findSourceVip();
 #define MAX_ROUTES 128 /* maximum size of routing table */
 #define MAX_TTL 120 /* time (in seconds) until route expires */
 #define MAX_PACKET_BUFFER_SIZE 64000
+#define MAX_COST 16;
 
 char *address;
 uint16_t port;
@@ -360,12 +361,9 @@ void* sendRoutingUpdates () {
         // printf("=================================\n");
         tempPtr = tempPtr + 4;
       }
-
       sendMessage(0, curr->toAddress, packetBuffer);
-
       curr = curr->next;
     }
-    // free(tempPtr);
     free(ripbuf);
     free(packetBuffer);
     sleep(10);
