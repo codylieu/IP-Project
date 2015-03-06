@@ -15,7 +15,7 @@ int ifconfig();
 int routes();
 int up(char * interfaceID);
 int down(char * interfaceID);
-int sendMessage(int sock, char * vip, char * message);
+int sendMessage(int sock, char * vip, unsigned char * message);
 int findPort(char *vip);
 void* sendRoutingUpdates();
 int sendRoutingResponse();
@@ -27,6 +27,7 @@ int initializeRoutingTable();
 #define MAX_BACK_LOG (5)
 #define MAX_ROUTES 128 /* maximum size of routing table */
 #define MAX_TTL 120 /* time (in seconds) until route expires */
+#define MAX_PACKET_BUFFER_SIZE 64000
 
 char *address;
 int port;
@@ -286,10 +287,16 @@ void* sendRoutingUpdates () {
       // sendMessage();
       curr = curr->next;
     }
+    free(ptr);
+    free(packetBuffer);
 
     sleep(5);
   }
   return NULL;
+}
+
+int send_rip_packets () {
+  return 1;
 }
 
 // Prints out messages
@@ -317,7 +324,46 @@ void* handleReceiveMessages () {
 
   while(1) {
     if (recvfrom(s, buf, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&from, &fromLen) > 0) {
-      printf("Received Message: %s\n", buf);
+      int i = 0;
+      uint16_t command = 0;
+      command |= buf[i] << 0;
+      command |= buf[i + 1];
+      printf("Deserialized Command: %hu\n", command);
+      
+      if (command == 1 || command == 2) {
+        i = i + 2;
+        uint16_t num_entries = 0;
+        num_entries |= buf[i] << 0;
+        num_entries |= buf[i + 1];
+        i = i + 2;
+        printf("Deserialized Num Entries: %hu\n", num_entries);
+        int j;
+        for(j = 0; j < num_entries; ++j) {
+          uint32_t cost = 0;
+          cost |= buf[i] << 24;
+          cost |= buf[i + 1] << 16;
+          cost |= buf[i + 2] << 8;
+          cost |= buf[i + 3];
+          i = i + 4;
+          printf("Cost %d: %u\n", j, cost);
+          uint32_t address = 0;
+          address |= buf[i] << 24;
+          address |= buf[i + 1] << 16;
+          address |= buf[i + 2] << 8;
+          address |= buf[i + 3];
+          i = i + 4;
+          printf("Address %d: %u\n", j, address);
+        }
+      }
+      else if (command == 0) {
+        // Treat it as a signed char *
+        int j;
+        char deserializedMessage[MAX_PACKET_BUFFER_SIZE];
+        for(j = 0; j < fromLen; ++j) {
+          deserializedMessage[j] = buf[j + 2];
+        }
+        printf("Received Message: %s\n", deserializedMessage);
+      }
     }
   }
   return NULL;
@@ -368,7 +414,19 @@ int handleUserInput () {
       splitMsg = strtok(NULL, " ");
       char *vip = strdup(splitMsg);
       splitMsg = strtok(NULL, "");
-      char *message = strdup(splitMsg);
+      char *tempMessage = strdup(splitMsg);
+
+      // Make command 0
+      unsigned char *message = malloc(sizeof(int) + sizeof(tempMessage));
+      // encode 0 as command
+      uint16_t command = 0;
+      message[0] = command >> 8;
+      message[1] = command;
+      
+      int i = 0;
+      for(i = 0; i < strlen(tempMessage); ++i) {
+        message[i + 2] = tempMessage[i];
+      }
       sendMessage(sock, vip, message);
     }
     else {
@@ -408,7 +466,7 @@ int initializeRoutingTable() {
 
 // Not sure if this should be expanded later to support RIP packets and forwarding
 // It probably should, in which case, we might need to change function signature
-int sendMessage (int sock, char * vip, char * message) {
+int sendMessage (int sock, char * vip, unsigned char * message) {
   int samePort = 0;
   struct interface *curr = root;
   while (curr) {
