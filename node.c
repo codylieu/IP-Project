@@ -8,7 +8,7 @@
 #include <pthread.h>
 #include "ipsum.c"
 
-int handleUserInput();
+void handleUserInput();
 void* handleReceiveMessages();
 int ifconfig();
 int routes();
@@ -85,7 +85,7 @@ int main(int argc, char ** argv) {
   char * line = NULL;
   size_t len = 0;
   ssize_t read;
-  struct interface *curr;
+  struct interface *builder;
   root = NULL;
 
   if (argc < 2) {
@@ -113,36 +113,36 @@ int main(int argc, char ** argv) {
   // Creates linked list of interfaces
   int interfaceID = 1;
   while ((read = getline(&line, &len, fp)) != -1) {
-    curr = (struct interface *) malloc(sizeof(struct interface));
-    curr->interfaceID = interfaceID;
+    builder = (struct interface *) malloc(sizeof(struct interface));
+    builder->interfaceID = interfaceID;
     interfaceID++;
 
     char *splitLine;
     splitLine = strtok(line, ":");
 
     if (strcmp(splitLine, "localhost") == 0) {
-      curr->address = strdup("127.0.0.1");
+      builder->address = strdup("127.0.0.1");
     }
     else {
-      curr->address = strdup(splitLine);
-      printf("Address test: %s\n", curr->address);
+      builder->address = strdup(splitLine);
+      printf("Address test: %s\n", builder->address);
     }
     splitLine = strtok(NULL, " ");
-    curr->port = atoi(splitLine);
+    builder->port = atoi(splitLine);
     splitLine = strtok(NULL, " ");
-    curr->fromAddress = strdup(splitLine);
+    builder->fromAddress = strdup(splitLine);
     splitLine = strtok(NULL, "\n");
-    curr->toAddress = strdup(splitLine);
-    curr->up = 1;
+    builder->toAddress = strdup(splitLine);
+    builder->up = 1;
     if (root == NULL) {
-      root = curr;
+      root = builder;
     }
     else {
       struct interface *temp1 = root;
       while(temp1->next != NULL) {
         temp1 = temp1->next;
       }
-      temp1->next = curr;
+      temp1->next = builder;
     }
   }
 
@@ -161,7 +161,10 @@ int main(int argc, char ** argv) {
 
   pthread_create(&tid[0], NULL, &handleReceiveMessages, NULL);
   pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
-  return handleUserInput();
+  handleUserInput();
+  // One problem that could happen later is that I only free one instance of builder,
+  // but multiple builders were used to create the linkedlist
+  free(builder);
   close(sock2);
   exit(EXIT_SUCCESS);
 }
@@ -169,8 +172,11 @@ int main(int argc, char ** argv) {
 // Code from the book
 void mergeRoute (Route *new) {
   int i;
-
+  // printf("NEW DEST: %s\n", new->Destination);
   for (i = 0; i < numRoutes; ++i) {
+    // printf("new Dest: %s\n", new->Destination);
+    // printf("rt Dest: %s\n", routingTable[i].Destination);
+    // printf("Are new and rt dest equql: %d\n", strcmp(new->Destination, routingTable[i].Destination));
     if (strcmp(new->Destination, routingTable[i].Destination) == 0) {
       if (new->cost + 1 < routingTable[i].cost) {
         /* Found a better route: */
@@ -237,10 +243,9 @@ void* sendRoutingUpdates () {
     }
 
     // Serialize packet info into buffer
-    unsigned char *packetBuffer, *ptr;
-    packetBuffer = malloc(sizeof(struct iphdr) + 2*sizeof(uint16_t) + num_entries*sizeof(entries));
-    ptr = malloc(sizeof(struct iphdr) + 2*sizeof(uint16_t) + num_entries*sizeof(entries));
-    ptr = packetBuffer;
+    unsigned char *packetBuffer, *tempPtr;
+    packetBuffer = malloc(sizeof(struct iphdr) + 2*sizeof(uint16_t) + 2*num_entries*sizeof(uint32_t));
+    tempPtr = packetBuffer;
 
     // ptr = serializeIp(vip, 200, size, ptr);
     struct interface *curr = root;
@@ -257,77 +262,87 @@ void* sendRoutingUpdates () {
       ip.saddr = inet_addr(curr->fromAddress);    //Source Address
       ip.daddr = inet_addr(curr->toAddress);      //Destination Address (vip used to get ports in routing tables, so forward vip along)
 
-      ptr[0] = ip.tos;
-      ptr = ptr + 1;
+      tempPtr[0] = ip.tos;
+      tempPtr = tempPtr + 1;
 
-      ptr[0] = ip.tot_len >> 8;
-      ptr[1] = ip.tot_len;    
-      ptr = ptr + 2;
+      tempPtr[0] = ip.tot_len >> 8;
+      tempPtr[1] = ip.tot_len;    
+      tempPtr = tempPtr + 2;
 
-      ptr[0] = ip.id >> 8;
-      ptr[1] = ip.id;
-      ptr = ptr + 2;
+      tempPtr[0] = ip.id >> 8;
+      tempPtr[1] = ip.id;
+      tempPtr = tempPtr + 2;
 
-      ptr[0] = ip.frag_off >> 8;
-      ptr[1] = ip.frag_off;    
-      ptr = ptr + 2;
+      tempPtr[0] = ip.frag_off >> 8;
+      tempPtr[1] = ip.frag_off;    
+      tempPtr = tempPtr + 2;
 
-      ptr[0] = ip.ttl;
-      ptr = ptr + 1;
+      tempPtr[0] = ip.ttl;
+      tempPtr = tempPtr + 1;
 
-      ptr[0] = ip.protocol;
-      ptr = ptr + 1;
+      tempPtr[0] = ip.protocol;
+      tempPtr = tempPtr + 1;
 
-      ptr[0] = ip.check >> 8;
-      ptr[1] = ip.check;    
-      ptr = ptr + 2;
+      tempPtr[0] = ip.check >> 8;
+      tempPtr[1] = ip.check;    
+      tempPtr = tempPtr + 2;
       
-      ptr[0] = ip.saddr >> 24;
-      ptr[1] = ip.saddr >> 16;
-      ptr[2] = ip.saddr >> 8;
-      ptr[3] = ip.saddr;
-      ptr = ptr + 4;
+      tempPtr[0] = ip.saddr >> 24;
+      tempPtr[1] = ip.saddr >> 16;
+      tempPtr[2] = ip.saddr >> 8;
+      tempPtr[3] = ip.saddr;
+      tempPtr = tempPtr + 4;
 
-      ptr[0] = ip.daddr >> 24;
-      ptr[1] = ip.daddr >> 16;
-      ptr[2] = ip.daddr >> 8;
-      ptr[3] = ip.daddr;
-      ptr = ptr + 4;
+      tempPtr[0] = ip.daddr >> 24;
+      tempPtr[1] = ip.daddr >> 16;
+      tempPtr[2] = ip.daddr >> 8;
+      tempPtr[3] = ip.daddr;
+      tempPtr = tempPtr + 4;
 
       
 
 
-      ptr[0] = command >> 8;
-      ptr[1] = command;    
-      ptr = ptr + 2;
+      tempPtr[0] = command >> 8;
+      tempPtr[1] = command;    
+      tempPtr = tempPtr + 2;
    
-      ptr[0] = num_entries >> 8;
-      ptr[1] = num_entries;
-      ptr = ptr + 2;
-   
+      tempPtr[0] = num_entries >> 8;
+      tempPtr[1] = num_entries;
+      tempPtr = tempPtr + 2;
+
+      // This shit broke code before when it was commented
+      // printf("num_entries: %d\n", num_entries);
+
       for(j = 0; j < num_entries; ++j) {
-        ptr[0] = entries[j].cost >> 24;
-        ptr[1] = entries[j].cost >> 16;
-        ptr[2] = entries[j].cost >> 8;
-        ptr[3] = entries[j].cost;
-        ptr = ptr + 4;
+        tempPtr[0] = entries[j].cost >> 24;
+        tempPtr[1] = entries[j].cost >> 16;
+        tempPtr[2] = entries[j].cost >> 8;
+        tempPtr[3] = entries[j].cost;
+        tempPtr = tempPtr + 4;
    
-        ptr[0] = entries[j].address >> 24;
-        ptr[1] = entries[j].address >> 16;
-        ptr[2] = entries[j].address >> 8;
-        ptr[3] = entries[j].address;
-        ptr = ptr + 4;
+        tempPtr[0] = entries[j].address >> 24;
+        tempPtr[1] = entries[j].address >> 16;
+        tempPtr[2] = entries[j].address >> 8;
+        tempPtr[3] = entries[j].address;
+        uint32_t address = 0;
+
+        // address |= tempPtr[0] << 24;
+        // address |= tempPtr[1] << 16;
+        // address |= tempPtr[2] << 8;
+        // address |= tempPtr[3];
+        // printf("=================================\n");
+        // printf("Received address %u\n", address);
+        // printf("=================================\n");
+        tempPtr = tempPtr + 4;
       }
+
       sendMessage(0, curr->toAddress, packetBuffer);
+
       curr = curr->next;
     }
-    // struct interface *curr = root;
-    // while (curr) {
-    //   sendMessage(0, curr->toAddress, packetBuffer);
-    //   // packageData(0, curr->toAddress, NULL, 200);
-    //   curr = curr->next;
-    // }
-    sleep(20);
+    // free(tempPtr);
+    free(packetBuffer);
+    sleep(10);
   }
   return NULL;
 }
@@ -559,7 +574,6 @@ void *packageData(int sock, char *vip, unsigned char *message, int protocol)  {
     size = sizeof(struct iphdr) + sizeof(message);
   }
   packetBuffer = malloc(size);
-  ptr = malloc(size);
   ptr = packetBuffer;
 
   // Put iphdr into packet buffer
@@ -580,7 +594,7 @@ void *packageData(int sock, char *vip, unsigned char *message, int protocol)  {
 
   sendMessage(sock, vip, packetBuffer);
 
-  // free(ptr);
+  free(packetBuffer);
   return NULL;
 }
 
@@ -624,6 +638,7 @@ void* handleReceiveMessages () {
         uint16_t command = 0;
         command |= ptr[i] << 8;
         command |= ptr[i + 1];
+        printf("==========================================\n");
         printf("RECEIVED: Deserialized Command: %hu\n", command);
         // if (command == 1 || command == 2) {
           // Format everything to a Route and then call update routes
@@ -635,7 +650,7 @@ void* handleReceiveMessages () {
         printf("RECEIVED: Deserialized Num Entries: %hu\n", num_entries);
         Route newRoutes[num_entries];
         for(j = 0; j < num_entries; ++j) {
-          Route tempRoute;
+          // Route tempRoute;
           uint32_t cost = 0;
           cost |= ptr[i] << 24;
           cost |= ptr[i + 1] << 16;
@@ -652,28 +667,19 @@ void* handleReceiveMessages () {
           printf("RECEIVED Address %d: %u\n", j, address);
             
           // Building the Routes
-          struct in_addr temp;
-          temp.s_addr = address;
-          inet_ntop(AF_INET, &temp, tempRoute.Destination, INET_ADDRSTRLEN);
+          char dest[INET_ADDRSTRLEN];
+          inet_ntop(AF_INET, &address, dest, INET_ADDRSTRLEN);
+          // tempRoute.Destination = dest;
 
-          char addr[INET_ADDRSTRLEN];
-          inet_ntop(AF_INET, &(ipReceived.saddr), addr, INET_ADDRSTRLEN);
-          tempRoute.NextHop = addr;
-          tempRoute.cost = cost;
-          tempRoute.TTL = MAX_TTL;
-          newRoutes[j] = tempRoute;
-          }
-        // updateRoutingTable(newRoutes, num_entries);
-        // }
-        // else if (command == 0) {
-        //   // Treat it as a signed char *
-        //   int j;
-        //   char deserializedMessage[MAX_PACKET_BUFFER_SIZE];
-        //   for(j = 0; j < fromLen; ++j) {
-        //     deserializedMessage[j] = buf[j + 2];
-        //   }
-        //   printf("Received Message: %s\n", deserializedMessage);
-        // }
+          char nextHop[INET_ADDRSTRLEN];
+          inet_ntop(AF_INET, &(ipReceived.saddr), nextHop, INET_ADDRSTRLEN);
+          newRoutes[j].Destination = strdup(dest);
+          newRoutes[j].NextHop = strdup(nextHop);
+          newRoutes[j].cost = cost;
+          newRoutes[j].TTL = MAX_TTL;
+        }
+        printf("==========================================\n");
+        updateRoutingTable(newRoutes, num_entries);
       }
       else  {
         // Need to parse through routingTable to see if the destination address
@@ -706,7 +712,7 @@ void* handleReceiveMessages () {
 }
 
 // Command line interface for users, supports commands
-int handleUserInput () {
+void handleUserInput () {
   int sock, recv_len;
   char msg[MAX_MSG_LENGTH], reply[MAX_BACK_LOG * 3];
   char buf[MAX_TRANSFER_UNIT];
@@ -751,20 +757,7 @@ int handleUserInput () {
       char *vip = strdup(splitMsg);
       splitMsg = strtok(NULL, "");
       unsigned char *tempMessage = (unsigned char *)strdup(splitMsg);
-      /*
-      // Make command 0
-      unsigned char *message = malloc(sizeof(int) + sizeof(tempMessage));
-      // encode 0 as command
-      uint16_t command = 2;
-      message[0] = command >> 8;
-      message[1] = command;
-      
-      int i = 0;
-      for(i = 0; i < strlen(tempMessage); ++i) {
-        message[i + 2] = tempMessage[i];
-      }
-      sendMessage(sock, vip, message);
-      */
+
       packageData(sock, vip, tempMessage, 1);
     }
     else {
@@ -772,8 +765,7 @@ int handleUserInput () {
     }
     printf("\n");
   }
-  // close(sock);
-  return 1;
+  // return 1;
 }
 
 // Initialize routing table by going through linked list of interfaces;
@@ -796,6 +788,9 @@ int initializeRoutingTable() {
     routingTable[numRoutes] = *toRoute;
     numRoutes++;
     curr = curr->next;
+
+    free(fromRoute);
+    free(toRoute);
   }
   return 1;
 }
@@ -925,8 +920,6 @@ int findNextHopInterfaceID (char *NextHop) {
     }
     curr = curr->next;
   }
-  //Default value
-  printf("root interface: %d\n", root->interfaceID);
   return root->interfaceID;
 }
 
