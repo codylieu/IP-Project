@@ -23,6 +23,7 @@ int initializeRoutingTable();
 void *packageData(int sock, char *vip, unsigned char *message, int protocol);
 int checkDestinationAddress(uint32_t ddaddr);
 char *findSourceVip();
+void send_rip_packets(uint16_t command, int interfaceID, char *fromAddress, char *toAddress);
 
 #define MAX_TRANSFER_UNIT (1400)
 #define MAX_MSG_LENGTH (512)
@@ -30,7 +31,7 @@ char *findSourceVip();
 #define MAX_ROUTES 128 /* maximum size of routing table */
 #define MAX_TTL 120 /* time (in seconds) until route expires */
 #define MAX_PACKET_BUFFER_SIZE 64000
-#define MAX_COST 16;
+#define MAX_COST 16; /* Define 16 to be infinity */
 
 char *address;
 uint16_t port;
@@ -155,13 +156,17 @@ int main(int argc, char ** argv) {
     perror("simplex-talk: socket");
     exit(1);
   }
-  // Initializes routing table with information contained in txt file
-  // This should be later encapsulated into routing thread as the first call
-  // Or this should encapsulate the routing thread, not sure yet
+
   initializeRoutingTable();
+  // Once nodes come online, send request to each interface
+  struct interface *iter = root;
+  while (iter) {
+    send_rip_packets(1, iter->interfaceID, strdup(iter->fromAddress), strdup(iter->toAddress));
+    iter = iter->next;
+  }
 
   pthread_create(&tid[0], NULL, &handleReceiveMessages, NULL);
-  pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
+  // pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
   handleUserInput();
   // One problem that could happen later is that I only free one instance of builder,
   // but multiple builders were used to create the linkedlist
@@ -336,9 +341,6 @@ void* sendRoutingUpdates () {
       tempPtr[1] = num_entries;
       tempPtr = tempPtr + 2;
 
-      // This shit broke code before when it was commented
-      // printf("num_entries: %d\n", num_entries);
-
       for(j = 0; j < num_entries; ++j) {
         tempPtr[0] = entries[j].cost >> 24;
         tempPtr[1] = entries[j].cost >> 16;
@@ -351,14 +353,6 @@ void* sendRoutingUpdates () {
         tempPtr[2] = entries[j].address >> 8;
         tempPtr[3] = entries[j].address;
         uint32_t address = 0;
-
-        // address |= tempPtr[0] << 24;
-        // address |= tempPtr[1] << 16;
-        // address |= tempPtr[2] << 8;
-        // address |= tempPtr[3];
-        // printf("=================================\n");
-        // printf("Received address %u\n", address);
-        // printf("=================================\n");
         tempPtr = tempPtr + 4;
       }
       sendMessage(0, curr->toAddress, packetBuffer);
@@ -448,8 +442,145 @@ struct deserializedTuple deserializeIPPacket(unsigned char * packetBuffer) {
   return dTuple;
 }
 
-int send_rip_packets () {
-  return 1;
+void send_rip_packets (uint16_t command, int interfaceID, char *fromAddress, char *toAddress) {
+  int i, j;
+  uint16_t num_entries;
+  if (command == 1) {
+    // Routing request
+    num_entries = numRoutes;
+  }
+  else if (command == 2) {
+    // Routing response
+    num_entries = 0;
+  }
+  struct {
+    uint32_t cost;
+    uint32_t address;
+  } entries[num_entries];
+  
+  printf("Command: %hu\n", command);
+  printf("Num Entries: %hu\n", num_entries);
+  for(i = 0; i < num_entries; ++i) {
+    entries[i].cost = routingTable[i].cost;
+    printf("Cost %d: %u\n", i, entries[i].cost);
+    inet_pton(AF_INET, routingTable[i].Destination, &entries[i].address);
+    printf("Address %d: %u\n", i, entries[i].address);
+  }
+  // Serialize packet info into buffer
+  unsigned char *packetBuffer, *tempPtr;
+  packetBuffer = malloc(sizeof(struct iphdr) + 2*sizeof(uint16_t) + 2*num_entries*sizeof(uint32_t));
+  tempPtr = packetBuffer;
+  // Need to get copy of the payload in order for checksum to work properly
+  // Getting a copy of the payload
+  unsigned char* ripbuf, *ripptr;
+  ripbuf = malloc(2*sizeof(uint16_t) + 2*num_entries*sizeof(uint32_t));
+  ripptr = ripbuf;
+  // Adding entries
+  ripptr[0] = command >> 8;
+  ripptr[1] = command;    
+  ripptr = ripptr + 2;
+ 
+  ripptr[0] = num_entries >> 8;
+  ripptr[1] = num_entries;
+  ripptr = ripptr + 2;
+  for(j = 0; j < num_entries; ++j) {
+    ripptr[0] = entries[j].cost >> 24;
+    ripptr[1] = entries[j].cost >> 16;
+    ripptr[2] = entries[j].cost >> 8;
+    ripptr[3] = entries[j].cost;
+    ripptr = ripptr + 4;
+ 
+    ripptr[0] = entries[j].address >> 24;
+    ripptr[1] = entries[j].address >> 16;
+    ripptr[2] = entries[j].address >> 8;
+    ripptr[3] = entries[j].address;
+    ripptr = ripptr + 4;
+  }
+  
+  struct iphdr ip;
+  ip.tos = 0;                                 //Type of Service
+  ip.tot_len = sizeof(struct iphdr) + 2*sizeof(uint16_t) + num_entries*sizeof(entries);                            //Total Length (28 bytes for IP and UDP and some data Bytes)
+  ip.id = interfaceID;                  //Identification
+  ip.frag_off = 0;                            //Fragmentation Offset Field
+  ip.ttl = MAX_TTL;                           //Time to Live
+  ip.protocol = 200;                          //Protocol
+  ip.check = ip_sum(ripbuf,2);                               //Checksum
+  ip.saddr = inet_addr(fromAddress);    //Source Address
+  ip.daddr = inet_addr(toAddress);      //Destination Address (vip used to get ports in routing tables, so forward vip along)
+
+  tempPtr[0] = ip.tos;
+  tempPtr = tempPtr + 1;
+
+  tempPtr[0] = ip.tot_len >> 8;
+  tempPtr[1] = ip.tot_len;    
+  tempPtr = tempPtr + 2;
+
+  tempPtr[0] = ip.id >> 8;
+  tempPtr[1] = ip.id;
+  tempPtr = tempPtr + 2;
+
+  tempPtr[0] = ip.frag_off >> 8;
+  tempPtr[1] = ip.frag_off;    
+  tempPtr = tempPtr + 2;
+
+  tempPtr[0] = ip.ttl;
+  tempPtr = tempPtr + 1;
+
+  tempPtr[0] = ip.protocol;
+  tempPtr = tempPtr + 1;
+
+  tempPtr[0] = ip.check >> 8;
+  tempPtr[1] = ip.check;    
+  tempPtr = tempPtr + 2;
+  
+  tempPtr[0] = ip.saddr >> 24;
+  tempPtr[1] = ip.saddr >> 16;
+  tempPtr[2] = ip.saddr >> 8;
+  tempPtr[3] = ip.saddr;
+  tempPtr = tempPtr + 4;
+
+  tempPtr[0] = ip.daddr >> 24;
+  tempPtr[1] = ip.daddr >> 16;
+  tempPtr[2] = ip.daddr >> 8;
+  tempPtr[3] = ip.daddr;
+  tempPtr = tempPtr + 4;
+
+  tempPtr[0] = command >> 8;
+  tempPtr[1] = command;    
+  tempPtr = tempPtr + 2;
+
+  tempPtr[0] = num_entries >> 8;
+  tempPtr[1] = num_entries;
+  tempPtr = tempPtr + 2;
+
+  // This shit broke code before when it was commented
+  // printf("num_entries: %d\n", num_entries);
+
+  for(j = 0; j < num_entries; ++j) {
+    tempPtr[0] = entries[j].cost >> 24;
+    tempPtr[1] = entries[j].cost >> 16;
+    tempPtr[2] = entries[j].cost >> 8;
+    tempPtr[3] = entries[j].cost;
+    tempPtr = tempPtr + 4;
+
+    tempPtr[0] = entries[j].address >> 24;
+    tempPtr[1] = entries[j].address >> 16;
+    tempPtr[2] = entries[j].address >> 8;
+    tempPtr[3] = entries[j].address;
+    uint32_t address = 0;
+
+    // address |= tempPtr[0] << 24;
+    // address |= tempPtr[1] << 16;
+    // address |= tempPtr[2] << 8;
+    // address |= tempPtr[3];
+    // printf("=================================\n");
+    // printf("Received address %u\n", address);
+    // printf("=================================\n");
+    tempPtr = tempPtr + 4;
+  }
+  sendMessage(0, toAddress, packetBuffer);
+  free(ripbuf);
+  free(packetBuffer);
 }
 
 // This converts char * into unsigned char
@@ -666,46 +797,55 @@ void* handleReceiveMessages () {
           command |= ptr[i + 1];
           printf("==========================================\n");
           printf("RECEIVED: Deserialized Command: %hu\n", command);
-          // if (command == 1 || command == 2) {
-            // Format everything to a Route and then call update routes
-          i = i + 2;
-          uint16_t num_entries = 0;
-          num_entries |= ptr[i] << 8;
-          num_entries |= ptr[i + 1];
-          i = i + 2;
-          printf("RECEIVED: Deserialized Num Entries: %hu\n", num_entries);
-          Route newRoutes[num_entries];
-          for(j = 0; j < num_entries; ++j) {
-            // Route tempRoute;
-            uint32_t cost = 0;
-            cost |= ptr[i] << 24;
-            cost |= ptr[i + 1] << 16;
-            cost |= ptr[i + 2] << 8;
-            cost |= ptr[i + 3];
-            i = i + 4;
-            printf("RECEIVED Cost %d: %u\n", j, cost);
-            uint32_t address = 0;
-            address |= ptr[i] << 24;
-            address |= ptr[i + 1] << 16;
-            address |= ptr[i + 2] << 8;
-            address |= ptr[i + 3];
-            i = i + 4;
-            printf("RECEIVED Address %d: %u\n", j, address);
-              
-            // Building the Routes
-            char dest[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &address, dest, INET_ADDRSTRLEN);
-            // tempRoute.Destination = dest;
+          
+          if (command == 1) {
+            // This is a request from another node, send back a response
+            // send_rip_packets(2);
 
-            char nextHop[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &(ipReceived.saddr), nextHop, INET_ADDRSTRLEN);
-            newRoutes[j].Destination = strdup(dest);
-            newRoutes[j].NextHop = strdup(nextHop);
-            newRoutes[j].cost = cost;
-            newRoutes[j].TTL = MAX_TTL;
           }
-          printf("==========================================\n");
-          updateRoutingTable(newRoutes, num_entries);
+          else if (command == 2) {
+            // This is a response, do the normal shit with it
+            // if (command == 1 || command == 2) {
+              // Format everything to a Route and then call update routes
+            i = i + 2;
+            uint16_t num_entries = 0;
+            num_entries |= ptr[i] << 8;
+            num_entries |= ptr[i + 1];
+            i = i + 2;
+            printf("RECEIVED: Deserialized Num Entries: %hu\n", num_entries);
+            Route newRoutes[num_entries];
+            for(j = 0; j < num_entries; ++j) {
+              // Route tempRoute;
+              uint32_t cost = 0;
+              cost |= ptr[i] << 24;
+              cost |= ptr[i + 1] << 16;
+              cost |= ptr[i + 2] << 8;
+              cost |= ptr[i + 3];
+              i = i + 4;
+              printf("RECEIVED Cost %d: %u\n", j, cost);
+              uint32_t address = 0;
+              address |= ptr[i] << 24;
+              address |= ptr[i + 1] << 16;
+              address |= ptr[i + 2] << 8;
+              address |= ptr[i + 3];
+              i = i + 4;
+              printf("RECEIVED Address %d: %u\n", j, address);
+                
+              // Building the Routes
+              char dest[INET_ADDRSTRLEN];
+              inet_ntop(AF_INET, &address, dest, INET_ADDRSTRLEN);
+              // tempRoute.Destination = dest;
+
+              char nextHop[INET_ADDRSTRLEN];
+              inet_ntop(AF_INET, &(ipReceived.saddr), nextHop, INET_ADDRSTRLEN);
+              newRoutes[j].Destination = strdup(dest);
+              newRoutes[j].NextHop = strdup(nextHop);
+              newRoutes[j].cost = cost;
+              newRoutes[j].TTL = MAX_TTL;
+            }
+            printf("==========================================\n");
+            updateRoutingTable(newRoutes, num_entries);
+          }
         }
         else  {
           // Need to parse through routingTable to see if the destination address
@@ -816,8 +956,8 @@ int initializeRoutingTable() {
     toRoute->TTL = MAX_TTL;
     routingTable[numRoutes] = *toRoute;
     numRoutes++;
-    curr = curr->next;
 
+    curr = curr->next;
     free(fromRoute);
     free(toRoute);
   }
