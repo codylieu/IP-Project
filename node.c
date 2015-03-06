@@ -158,7 +158,7 @@ int main(int argc, char ** argv) {
   initializeRoutingTable();
 
   pthread_create(&tid[0], NULL, &handleReceiveMessages, NULL);
-  // pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
+  pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
   return handleUserInput();
   close(sock2);
   exit(EXIT_SUCCESS);
@@ -210,120 +210,15 @@ void updateRoutingTable (Route *newRoute, int numNewRoutes) {
   }
 }
 
-// Used when RIP packet is received, will need to put values into a form
-// that updateRoutingTable can use 
-int deserializeRIPPacket (unsigned char * packetBuffer) {
-  int i;
-  printf("==========DESERIALIZATION START==========\n");
-  uint16_t dCommand = 0;
-  dCommand |= packetBuffer[0] << 8;
-  dCommand |= packetBuffer[1];
-  printf("Deserialized Command: %hu\n", dCommand);
-
-  packetBuffer = packetBuffer + 2;
-
-  uint16_t dNum_entries = 0;
-  dNum_entries |= packetBuffer[0] << 8;
-  dNum_entries |= packetBuffer[1];
-  printf("Deserialized Num Entries: %hu\n", dNum_entries);
-  packetBuffer = packetBuffer + 2;
-
-  for(i = 0; i < dNum_entries; ++i) {
-    uint32_t dCost = 0;
-    dCost |= packetBuffer[0] << 24;
-    dCost |= packetBuffer[1] << 16;
-    dCost |= packetBuffer[2] << 8;
-    dCost |= packetBuffer[3];
-    packetBuffer = packetBuffer + 4;
-    printf("Deserialized Cost %d: %u\n", i, dCost);
-    uint32_t dAddress = 0;
-    dAddress |= packetBuffer[0] << 24;
-    dAddress |= packetBuffer[1] << 16;
-    dAddress |= packetBuffer[2] << 8;
-    dAddress |= packetBuffer[3];
-    packetBuffer = packetBuffer + 4;
-    printf("Deserialized Address %d: %u\n", i, dAddress);
-  }
-  printf("==========DESERIALIZATION END==========\n");
-  return 1;
-}
-
-// Sends RIP packets to all interfaces
+// Sends RIP packets to all neighbors (interfaces)
 void* sendRoutingUpdates () {
-  int sock;
-  // if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-  //   perror("simplex-talk: socket");
-  //   exit(1);
-  // }
   while (1) {
-
-    /*
-    int i, j;
-
-    // Packet format
-    uint16_t command; // command will be 1 for request of routing info and 2 for a response
-    uint16_t num_entries; // will not exceed 64 and must be 0 for a request
-    struct {
-      uint32_t cost; // will not exceed 16 -> define infinity to be 16
-      uint32_t address; // IPv4 address
-    } entries[num_entries];
-
-    // Hard code in 2 for now, will also have to support request later.
-    command = 2;
-    num_entries = numRoutes;
-    printf("Command: %hu\n", command);
-    printf("Num Entries: %hu\n", num_entries);
-    for(i = 0; i < num_entries; ++i) {
-      entries[i].cost = routingTable[i].cost;
-      printf("Cost %d: %u\n", i, entries[i].cost);
-      inet_pton(AF_INET, routingTable[i].Destination, &entries[i].address);
-      printf("Address %d: %u\n", i, entries[i].address);
-    }
-
-    // Serialize packet info into buffer
-    unsigned char *packetBuffer, *ptr;
-    packetBuffer = malloc(2*sizeof(uint16_t) + num_entries*sizeof(entries));
-    // bzero((char *)&packetBuffer, sizeof(packetBuffer));
-    ptr = malloc(2*sizeof(uint16_t) + num_entries*sizeof(entries));
-    ptr = packetBuffer;
-
-    ptr[0] = command >> 8;
-    ptr[1] = command;    
-    ptr = ptr + 2;
-
-    ptr[0] = num_entries >> 8;
-    ptr[1] = num_entries;
-    ptr = ptr + 2;
-
-    for(j = 0; j < num_entries; ++j) {
-      ptr[0] = entries[j].cost >> 24;
-      ptr[1] = entries[j].cost >> 16;
-      ptr[2] = entries[j].cost >> 8;
-      ptr[3] = entries[j].cost;
-      ptr = ptr + 4;
-
-      ptr[0] = entries[j].address >> 24;
-      ptr[1] = entries[j].address >> 16;
-      ptr[2] = entries[j].address >> 8;
-      ptr[3] = entries[j].address;
-      ptr = ptr + 4;
-    }
-  */
-    // Test to see that the values are serialized and deserialized correctly
-    //deserializeRIPPacket(packetBuffer);
-
-    // Should now send packetBuffer to all immediate neighbors so that they can updateRoutingTables
     struct interface *curr = root;
     while (curr) {
-      //sendMessage(sock, curr->toAddress, packetBuffer);
-      packageData(sock, curr->toAddress, NULL, 200);
+      packageData(0, curr->toAddress, NULL, 200);
       curr = curr->next;
     }
-    // close(sock);
-    // free(ptr);
-    // free(packetBuffer);
-
-    sleep(20);
+    sleep(10);
   }
   return NULL;
 }
@@ -487,9 +382,9 @@ unsigned char *serializeRIP(unsigned char *ptr) {
   printf("Num Entries: %hu\n", num_entries);
   for(i = 0; i < num_entries; ++i) {
     entries[i].cost = routingTable[i].cost;
-    // printf("Cost %d: %u\n", i, entries[i].cost);
+    printf("Cost %d: %u\n", i, entries[i].cost);
     inet_pton(AF_INET, routingTable[i].Destination, &entries[i].address);
-    // printf("Address %d: %u\n", i, entries[i].address);
+    printf("Address %d: %u\n", i, entries[i].address);
   }
   ptr[0] = command >> 8;
   ptr[1] = command;    
@@ -532,6 +427,7 @@ void *packageData(int sock, char *vip, char *message, int protocol)  {
   unsigned char *packetBuffer, *ptr;
   struct interface *curr = root;
   struct iphdr ip;
+
   // Packet format
   uint16_t command; // command will be 1 for request of routing info and 2 for a response
   uint16_t num_entries; // will not exceed 64 and must be 0 for a request
@@ -539,6 +435,7 @@ void *packageData(int sock, char *vip, char *message, int protocol)  {
     uint32_t cost; // will not exceed 16 -> define infinity to be 16
     uint32_t address; // IPv4 address
   } entries[num_entries];
+  
   int size = 0;
 
   //Test sending messages
@@ -549,10 +446,10 @@ void *packageData(int sock, char *vip, char *message, int protocol)  {
     return NULL;
   }
   else if(protocol == 200)  {
-    size = sizeof(ip) + 2*sizeof(uint16_t) + num_entries*sizeof(entries);
+    size = sizeof(struct iphdr) + 2*sizeof(uint16_t) + num_entries*sizeof(entries);
   }
   else  {
-    size = sizeof(ip) + sizeof(message) / sizeof(message[0]);
+    size = sizeof(struct iphdr) + sizeof(message);
   }
   packetBuffer = malloc(size);
   ptr = malloc(size);
@@ -571,6 +468,7 @@ void *packageData(int sock, char *vip, char *message, int protocol)  {
   }
   sendMessage(sock, vip, packetBuffer);
 
+  free(ptr);
   return NULL;
 }
 
@@ -600,14 +498,65 @@ void* handleReceiveMessages () {
 
   while(1) {
     if (recvfrom(s, buf, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&from, &fromLen) > 0) {
-      int i = 0;
       unsigned char *ptr = deserializeIPPacket(buf);
       if(ipReceived.protocol == 0)  {
         char *message = deserializeMessage(ptr, fromLen);
         printf("Received Message: %s\n", message);
       }
       else if(ipReceived.protocol == 200) {
+        int i, j;
+        i = 0;
 
+        uint16_t command = 0;
+        command |= ptr[i] << 8;
+        command |= ptr[i + 1];
+        printf("RECEIVED: Deserialized Command: %hu\n", command);
+        // if (command == 1 || command == 2) {
+          // Format everything to a Route and then call update routes
+          i = i + 2;
+          uint16_t num_entries = 0;
+          num_entries |= ptr[i] << 8;
+          num_entries |= ptr[i + 1];
+          i = i + 2;
+          printf("RECEIVED: Deserialized Num Entries: %hu\n", num_entries);
+          Route newRoutes[num_entries];
+          for(j = 0; j < num_entries; ++j) {
+            Route tempRoute;
+            uint32_t cost = 0;
+            cost |= ptr[i] << 24;
+            cost |= ptr[i + 1] << 16;
+            cost |= ptr[i + 2] << 8;
+            cost |= ptr[i + 3];
+            i = i + 4;
+            printf("RECEIVED Cost %d: %u\n", j, cost);
+            uint32_t address = 0;
+            address |= ptr[i] << 24;
+            address |= ptr[i + 1] << 16;
+            address |= ptr[i + 2] << 8;
+            address |= ptr[i + 3];
+            i = i + 4;
+            printf("RECEIVED Address %d: %u\n", j, address);
+            
+            // Building the Routes
+            // struct in_addr temp;
+            // temp.s_addr = address;
+            // inet_ntop(AF_INET, &temp, tempRoute.Destination, INET_ADDRSTRLEN);
+            // tempRoute.NextHop= ;
+            // tempRoute.cost = cost;
+            // tempRoute.TTL = MAX_TTL;
+            // newRoutes[j] = tempRoute;
+          }
+          // updateRoutingTable(newRoutes, num_entries);
+        // }
+        // else if (command == 0) {
+        //   // Treat it as a signed char *
+        //   int j;
+        //   char deserializedMessage[MAX_PACKET_BUFFER_SIZE];
+        //   for(j = 0; j < fromLen; ++j) {
+        //     deserializedMessage[j] = buf[j + 2];
+        //   }
+        //   printf("Received Message: %s\n", deserializedMessage);
+        // }
       }
       else  {
         if (ipReceived.daddr != inet_addr(curr->fromAddress))  {
@@ -629,60 +578,6 @@ void* handleReceiveMessages () {
           printf("Received: %s\n", message);
         }
       }
-
-      /*
-      uint16_t command = 0;
-      command |= buf[i] << 8;
-      command |= buf[i + 1];
-      printf("RECEIVED: Deserialized Command: %hu\n", command);
-      if (command == 1 || command == 2) {
-        // Format everything to a Route and then call update routes
-        i = i + 2;
-        uint16_t num_entries = 0;
-        num_entries |= buf[i] << 8;
-        num_entries |= buf[i + 1];
-        i = i + 2;
-        printf("RECEIVED: Deserialized Num Entries: %hu\n", num_entries);
-        Route newRoutes[num_entries];
-        int j;
-        for(j = 0; j < num_entries; ++j) {
-          Route tempRoute;
-          uint32_t cost = 0;
-          cost |= buf[i] << 24;
-          cost |= buf[i + 1] << 16;
-          cost |= buf[i + 2] << 8;
-          cost |= buf[i + 3];
-          i = i + 4;
-          printf("RECEIVED Cost %d: %u\n", j, cost);
-          uint32_t address = 0;
-          address |= buf[i] << 24;
-          address |= buf[i + 1] << 16;
-          address |= buf[i + 2] << 8;
-          address |= buf[i + 3];
-          i = i + 4;
-          printf("RECEIVED Address %d: %u\n", j, address);
-          
-          // Building the Routes
-          struct in_addr temp;
-          temp.s_addr = address;
-          inet_ntop(AF_INET, &temp, tempRoute.Destination, INET_ADDRSTRLEN);
-          // tempRoute.NextHop;
-          tempRoute.cost = cost;
-          tempRoute.TTL = MAX_TTL;
-          newRoutes[j] = tempRoute;
-        }
-        // updateRoutingTable(newRoutes, num_entries);
-      }
-      else if (command == 0) {
-        // Treat it as a signed char *
-        int j;
-        char deserializedMessage[MAX_PACKET_BUFFER_SIZE];
-        for(j = 0; j < fromLen; ++j) {
-          deserializedMessage[j] = buf[j + 2];
-        }
-        printf("Received Message: %s\n", deserializedMessage);
-      }
-      */
     }
     sleep(10);
   }
@@ -832,14 +727,11 @@ int ifconfig () {
     curr = curr->next;
   }
 
-  printInterfaces(root);
-
   return 1;
 }
 
 // Remove printing of own from address, currently leave it in for testing
 int routes () {
-  printf("Response is: %s\n", "routes");
   int i;
   for(i = 0; i < numRoutes; ++i) {
     int id = findNextHopInterfaceID(routingTable[i].NextHop);
