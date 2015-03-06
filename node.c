@@ -711,8 +711,9 @@ void* handleReceiveMessages () {
           // Need to parse through routingTable to see if the destination address
           // received matches a destination address in the routingTable with cost 0.
           // If so, then you have arrived at your destination! If not, then forward
+
           if (checkDestinationAddress(ipReceived.daddr) == 0)  {
-            puts("need to forward");
+            printf("need to forward: %s\n", ptr);
             
             int sock;
             if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
