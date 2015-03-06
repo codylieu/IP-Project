@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include "ipsum.c"
 
 int server(uint16_t port);
 int client(const char * addr, uint16_t port);
@@ -49,6 +50,18 @@ typedef struct {
   int cost; /* distance metric */
   u_short TTL; /* time to live */
 } Route;
+
+struct iphdr  {
+  uint8_t   tos;      //Type of Service
+  uint16_t  tot_len;    //Total Length
+  uint16_t  id;       //Identification
+  uint16_t  frag_off;   //Fragmentation Offset Field
+  uint8_t   ttl;      //Time to Live
+  uint8_t   protocol;     //Protocol
+  uint16_t  check;      //Checksum
+  uint32_t  saddr;      //Source Address
+  uint32_t  daddr;      //Destination Address
+};
 
 int numRoutes = 0;
 Route routingTable[MAX_ROUTES];
@@ -134,7 +147,7 @@ int main(int argc, char ** argv) {
   initializeRoutingTable();
 
   pthread_create(&tid[0], NULL, &handleReceiveMessages, NULL);
-  // pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
+  //pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
   return handleUserInput();
 
   exit(EXIT_SUCCESS);
@@ -188,7 +201,7 @@ void updateRoutingTable (Route *newRoute, int numNewRoutes) {
 
 // Used when RIP packet is received, will need to put values into a form
 // that updateRoutingTable can use 
-int deserializePacket (unsigned char * packetBuffer) {
+int deserializeRIPPacket (unsigned char * packetBuffer) {
   int i;
 
   uint16_t dCommand = 0;
@@ -277,18 +290,172 @@ void* sendRoutingUpdates () {
     }
 
     // Test to see that the values are serialized and deserialized correctly
-    // deserializePacket(packetBuffer);
+    //deserializeRIPPacket(packetBuffer);
 
     // Should now send packetBuffer to all immediate neighbors so that they can updateRoutingTables
     struct interface *curr = root;
     while (curr) {
       // Do I use the original socket or create a new socket?
-      // sendMessage();
+      //sendMessage(curr->port, curr->address, packetBuffer);
       curr = curr->next;
     }
 
     sleep(5);
   }
+  return NULL;
+}
+
+// Deserializes IP packets used in forwarding
+int deserializeIPPacket(unsigned char * packetBuffer) {
+
+  // The 'd' before variable names indicates deserialized
+  uint8_t dtos = 0;
+  dtos |= packetBuffer[0];
+  printf("Deserialized Tos: %hhu\n", dtos);
+  packetBuffer = packetBuffer + 1;
+
+  uint16_t dtot_len = 0;
+  dtot_len |= packetBuffer[0] << 8;
+  dtot_len |= packetBuffer[1];
+  printf("Deserialized tot_len: %hu\n", dtot_len);
+  packetBuffer = packetBuffer + 2;
+
+  uint16_t did = 0;
+  did |= packetBuffer[0] << 8;
+  did |= packetBuffer[1];
+  printf("Deserialized id: %hu\n", did);
+  packetBuffer = packetBuffer + 2;
+
+  uint16_t dfrag_off = 0;
+  dfrag_off |= packetBuffer[0] << 8;
+  dfrag_off |= packetBuffer[1];
+  printf("Deserialized frag_off: %hu\n", dfrag_off);
+  packetBuffer = packetBuffer + 2;
+
+  uint8_t dttl = 0;
+  dttl |= packetBuffer[0];
+  printf("Deserialized ttl: %hhu\n", dttl);
+  packetBuffer = packetBuffer + 1;
+
+  uint8_t dprotocol = 0;
+  dprotocol |= packetBuffer[0];
+  printf("Deserialized protocol: %hhu\n", dprotocol);
+  packetBuffer = packetBuffer + 1;
+
+  uint16_t dcheck = 0;
+  dcheck |= packetBuffer[0] << 8;
+  dcheck |= packetBuffer[1];
+  printf("Deserialized checksum: %hu\n", dcheck);
+  packetBuffer = packetBuffer + 2;
+
+  uint32_t dsaddr = 0;
+  dsaddr |= packetBuffer[0] << 24;
+  dsaddr |= packetBuffer[1] << 16;
+  dsaddr |= packetBuffer[2] << 8;
+  dsaddr |= packetBuffer[3];
+  printf("Deserialized saddr: %u\n", dsaddr);
+  packetBuffer = packetBuffer + 4;
+
+  uint32_t ddaddr = 0;
+  ddaddr |= packetBuffer[0] << 24;
+  ddaddr |= packetBuffer[1] << 16;
+  ddaddr |= packetBuffer[2] << 8;
+  ddaddr |= packetBuffer[3];
+  printf("Deserialized daddr: %u\n", ddaddr);
+  packetBuffer = packetBuffer + 4;
+
+  uint32_t temp = 0;
+  temp |= packetBuffer[0] << 24;
+  temp |= packetBuffer[1] << 16;
+  temp |= packetBuffer[2] << 8;
+  temp |= packetBuffer[3];
+  printf("Deserialized temp: %s\n", itoa(temp));
+  packetBuffer = packetBuffer + 4;
+  /*
+  int i = 0;
+  while(packetBuffer[i] != NULL)  {
+    itoa(packetBuffer[i], message[i]);
+    //printf("char: %s", (char) message[i]);
+    packetBuffer = packetBuffer + 1;
+  }
+  */
+  //printf("Deserialized message: %s", packetBuffer[0]);
+
+  return 1;
+}
+
+// Serialize ip header info along with message to have enough info for forwarding
+void *sendForwardMessage(int sock, char *vip, char *message)  {
+  // Serialize packet info into buffer
+  unsigned char *packetBuffer, *ptr;
+  struct interface *curr = root;
+  struct iphdr ip;
+  ip.tos = 0;                                                     //Type of Service
+  ip.tot_len = htons(20 + sizeof(message) / sizeof(message[0]));  //Total Length (28 bytes for IP and UDP and some data Bytes)
+  ip.id = curr->interfaceID;                                      //Identification
+  ip.frag_off = 0;                                                //Fragmentation Offset Field
+  ip.ttl = MAX_TTL;                                               //Time to Live
+  ip.protocol = IPPROTO_UDP;                                      //Protocol
+  ip.check = ip_sum(message,2);                                   //Checksum
+  ip.saddr = inet_addr(address);                                  //Source Address
+  ip.daddr = inet_addr(vip);                                      //Destination Address (vip used to get ports 
+                                                                  //in routing tables, so forward vip along)
+  
+  printf("Tos: %u\n", ip.tos);
+  printf("Tot_len: %u\n", ip.tot_len);
+  printf("Saddr: %u\n", ip.saddr);
+  printf("Daddr: %u\n", ip.daddr);
+
+  packetBuffer = malloc(sizeof(ip) + sizeof(message) / sizeof(message[0]));
+  ptr = malloc(sizeof(ip) + sizeof(message) / sizeof(message[0]));
+  ptr = packetBuffer;
+
+  // Put iphdr and data into packet buffer
+  ptr[0] = ip.tos;
+  ptr = ptr + 1;
+
+  ptr[0] = ip.tot_len >> 8;
+  ptr[1] = ip.tot_len;    
+  ptr = ptr + 2;
+
+  ptr[0] = ip.id >> 8;
+  ptr[1] = ip.id;    
+  ptr = ptr + 2;
+
+  ptr[0] = ip.frag_off >> 8;
+  ptr[1] = ip.frag_off;    
+  ptr = ptr + 2;
+
+  ptr[0] = ip.ttl;
+  ptr = ptr + 1;
+
+  ptr[0] = ip.protocol;
+  ptr = ptr + 1;
+
+  ptr[0] = ip.check >> 8;
+  ptr[1] = ip.check;    
+  ptr = ptr + 2;
+  
+  ptr[0] = ip.saddr >> 24;
+  ptr[1] = ip.saddr >> 16;
+  ptr[2] = ip.saddr >> 8;
+  ptr[3] = ip.saddr;
+  ptr = ptr + 4;
+
+  ptr[0] = ip.daddr >> 24;
+  ptr[1] = ip.daddr >> 16;
+  ptr[2] = ip.daddr >> 8;
+  ptr[3] = ip.daddr;
+  ptr = ptr + 4;
+  /*
+  memcpy(packetBuffer, (char *)&ip, sizeof(ip));
+  memcpy(packetBuffer + sizeof(ip), (char *)&message, sizeof(message) / sizeof(message[0]));
+  */
+
+  deserializeIPPacket(packetBuffer);
+
+  sendMessage(curr->port, curr->address, packetBuffer);
+
   return NULL;
 }
 
@@ -317,6 +484,7 @@ void* handleReceiveMessages () {
 
   while(1) {
     if (recvfrom(s, buf, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&from, &fromLen) > 0) {
+      //The following should be gibberish if sending happens correctly after IP implementation
       printf("Received Message: %s\n", buf);
     }
   }
@@ -370,6 +538,14 @@ int handleUserInput () {
       splitMsg = strtok(NULL, "");
       char *message = strdup(splitMsg);
       sendMessage(sock, vip, message);
+    }
+    //Test for IP
+    else if (strcmp(splitMsg, "sendip") == 0) {
+      splitMsg = strtok(NULL, " ");
+      char *vip = strdup(splitMsg);
+      splitMsg = strtok(NULL, "");
+      char *message = strdup(splitMsg);
+      sendForwardMessage(sock, vip, message);
     }
     else {
       printf("Invalid Command\n");
@@ -428,6 +604,10 @@ int sendMessage (int sock, char * vip, char * message) {
   else {
     sout.sin_port = htons(findPort(vip));
   }
+  // Need to send packets encoded with data. The message should be embedded within and then
+  // deserialized at the delivery end point
+
+
 
   if (sendto(sock, message, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&sout, soutLen) < 0) {
     perror("Send error");
@@ -442,6 +622,9 @@ int ifconfig () {
     printf("%d %s %s\n", curr->interfaceID, curr->fromAddress, running);
     curr = curr->next;
   }
+
+  printInterfaces(root);
+
   return 1;
 }
 
