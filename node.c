@@ -22,6 +22,7 @@ int findNextHopInterfaceID(char *NextHop);
 int initializeRoutingTable();
 void *packageData(int sock, char *vip, unsigned char *message, int protocol);
 int checkDestinationAddress(uint32_t ddaddr);
+char *findSourceVip();
 
 #define MAX_TRANSFER_UNIT (1400)
 #define MAX_MSG_LENGTH (512)
@@ -426,15 +427,15 @@ unsigned char *serializeIp(char *vip, int protocol, int size, unsigned char *ptr
   
   struct iphdr ip;
   struct interface *curr = root;  
-  ip.tos = 0;                     //Type of Service
-  ip.tot_len = htons(size);       //Total Length (28 bytes for IP and UDP and some data Bytes)
-  ip.id = curr->interfaceID;      //Identification
-  ip.frag_off = 0;                //Fragmentation Offset Field
-  ip.ttl = MAX_TTL;               //Time to Live
-  ip.protocol = protocol;         //Protocol
-  ip.check = 0;                   //Checksum
-  ip.saddr = inet_addr(address);  //Source Address
-  ip.daddr = inet_addr(vip);      //Destination Address (vip used to get ports in routing tables, so forward vip along)
+  ip.tos = 0;                       //Type of Service
+  ip.tot_len = htons(size);         //Total Length (28 bytes for IP and UDP and some data Bytes)
+  ip.id = curr->interfaceID;        //Identification
+  ip.frag_off = 0;                  //Fragmentation Offset Field
+  ip.ttl = MAX_TTL;                 //Time to Live
+  ip.protocol = protocol;           //Protocol
+  ip.check = 0;                     //Checksum
+  ip.saddr = inet_addr(findSourceVip());  //Source Address
+  ip.daddr = inet_addr(vip);        //Destination Address (vip used to get ports in routing tables, so forward vip along)
 
   ptr[0] = ip.tos;
   ptr = ptr + 1;
@@ -654,12 +655,15 @@ void* handleReceiveMessages () {
           struct in_addr temp;
           temp.s_addr = address;
           inet_ntop(AF_INET, &temp, tempRoute.Destination, INET_ADDRSTRLEN);
-          tempRoute.NextHop = ipReceived.saddr;
+
+          char addr[INET_ADDRSTRLEN];
+          inet_ntop(AF_INET, &(ipReceived.saddr), addr, INET_ADDRSTRLEN);
+          tempRoute.NextHop = addr;
           tempRoute.cost = cost;
           tempRoute.TTL = MAX_TTL;
           newRoutes[j] = tempRoute;
           }
-          // updateRoutingTable(newRoutes, num_entries);
+        // updateRoutingTable(newRoutes, num_entries);
         // }
         // else if (command == 0) {
         //   // Treat it as a signed char *
@@ -876,6 +880,17 @@ int down (char *interfaceID) {
 }
 
 /* Helper functions */
+
+//Find source vip
+char *findSourceVip() {
+  int i;
+  for (i = 0; i < numRoutes; i++) {
+    if(routingTable[i].cost == 0) {
+      return routingTable[i].Destination;
+    }
+  }
+  return 0;
+}
 
 // Find if the received destination address matches an address with cost 0 in the routingTable
 int checkDestinationAddress(uint32_t daddr) {
