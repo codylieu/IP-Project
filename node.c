@@ -684,7 +684,7 @@ void* handleReceiveMessages () {
       }
       */
     }
-    sleep(20);
+    sleep(10);
   }
   close(s);
   return NULL;
