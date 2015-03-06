@@ -16,7 +16,7 @@ int ifconfig();
 int routes();
 int up(char * interfaceID);
 int down(char * interfaceID);
-int sendMessage(int sock, char * vip, char * message);
+int sendMessage(int sock, char * vip, unsigned char * message);
 int findPort(char *vip);
 void* sendRoutingUpdates();
 int sendRoutingResponse();
@@ -28,6 +28,7 @@ int initializeRoutingTable();
 #define MAX_BACK_LOG (5)
 #define MAX_ROUTES 128 /* maximum size of routing table */
 #define MAX_TTL 120 /* time (in seconds) until route expires */
+#define MAX_PACKET_BUFFER_SIZE 64000
 
 char *address;
 int port;
@@ -62,6 +63,8 @@ struct iphdr  {
   uint32_t  saddr;      //Source Address
   uint32_t  daddr;      //Destination Address
 };
+
+struct iphdr ipReceived;
 
 int numRoutes = 0;
 Route routingTable[MAX_ROUTES];
@@ -299,6 +302,8 @@ void* sendRoutingUpdates () {
       //sendMessage(curr->port, curr->address, packetBuffer);
       curr = curr->next;
     }
+    free(ptr);
+    free(packetBuffer);
 
     sleep(5);
   }
@@ -306,7 +311,8 @@ void* sendRoutingUpdates () {
 }
 
 // Deserializes IP packets used in forwarding
-int deserializeIPPacket(unsigned char * packetBuffer) {
+unsigned char *deserializeIPPacket(unsigned char * packetBuffer) {
+  struct iphdr ip;
 
   // The 'd' before variable names indicates deserialized
   uint8_t dtos = 0;
@@ -364,53 +370,54 @@ int deserializeIPPacket(unsigned char * packetBuffer) {
   printf("Deserialized daddr: %u\n", ddaddr);
   packetBuffer = packetBuffer + 4;
 
-  uint32_t temp = 0;
-  temp |= packetBuffer[0] << 24;
-  temp |= packetBuffer[1] << 16;
-  temp |= packetBuffer[2] << 8;
-  temp |= packetBuffer[3];
-  printf("Deserialized temp: %s\n", itoa(temp));
-  packetBuffer = packetBuffer + 4;
-  /*
-  int i = 0;
-  while(packetBuffer[i] != NULL)  {
-    itoa(packetBuffer[i], message[i]);
-    //printf("char: %s", (char) message[i]);
-    packetBuffer = packetBuffer + 1;
-  }
-  */
-  //printf("Deserialized message: %s", packetBuffer[0]);
+  ip.tos = dtos;                  //Type of Service
+  ip.tot_len = dtot_len;          //Total Length (28 bytes for IP and UDP and some data Bytes)
+  ip.id = did;                    //Identification
+  ip.frag_off = dfrag_off;        //Fragmentation Offset Field
+  ip.ttl = dttl;                  //Time to Live
+  ip.protocol = dprotocol;        //Protocol
+  ip.check = dcheck;              //Checksum
+  ip.saddr = dsaddr;              //Source Address
+  ip.daddr = ddaddr;              //Destination Address (vip used to get ports 
+                                  //in routing tables, so forward vip along)
+  ipReceived = ip;
+  
+  return packetBuffer;
+}
 
+int send_rip_packets () {
   return 1;
 }
 
-// Serialize ip header info along with message to have enough info for forwarding
-void *sendForwardMessage(int sock, char *vip, char *message)  {
-  // Serialize packet info into buffer
-  unsigned char *packetBuffer, *ptr;
-  struct interface *curr = root;
+// This converts char * into unsigned char
+unsigned char *messageConvert(char *message, unsigned char *ptr) {
+  int i = 0;
+  for(i = 0; i < strlen(message); ++i) {
+    ptr[i] = message[i];
+  }
+  return ptr;
+}
+
+// This generates iphdrs
+struct iphdr generateIphdr(char *vip, int protocol, int size) {
+          printf("vip : %s", vip);
   struct iphdr ip;
-  ip.tos = 0;                                                     //Type of Service
-  ip.tot_len = htons(20 + sizeof(message) / sizeof(message[0]));  //Total Length (28 bytes for IP and UDP and some data Bytes)
-  ip.id = curr->interfaceID;                                      //Identification
-  ip.frag_off = 0;                                                //Fragmentation Offset Field
-  ip.ttl = MAX_TTL;                                               //Time to Live
-  ip.protocol = IPPROTO_UDP;                                      //Protocol
-  ip.check = ip_sum(message,2);                                   //Checksum
-  ip.saddr = inet_addr(address);                                  //Source Address
-  ip.daddr = inet_addr(vip);                                      //Destination Address (vip used to get ports 
-                                                                  //in routing tables, so forward vip along)
-  
-  printf("Tos: %u\n", ip.tos);
-  printf("Tot_len: %u\n", ip.tot_len);
-  printf("Saddr: %u\n", ip.saddr);
-  printf("Daddr: %u\n", ip.daddr);
+  struct interface *curr = root;  
+  ip.tos = 0;                     //Type of Service
+  ip.tot_len = htons(size);       //Total Length (28 bytes for IP and UDP and some data Bytes)
+  ip.id = curr->interfaceID;      //Identification
+  ip.frag_off = 0;                //Fragmentation Offset Field
+  ip.ttl = MAX_TTL;               //Time to Live
+  ip.protocol = protocol;         //Protocol
+  ip.check = 0;                   //Checksum
+  ip.saddr = inet_addr(address);  //Source Address
+  ip.daddr = inet_addr(vip);      //Destination Address (vip used to get ports
+                                  //in routing tables, so forward vip along)
+  return ip;
+}
 
-  packetBuffer = malloc(sizeof(ip) + sizeof(message) / sizeof(message[0]));
-  ptr = malloc(sizeof(ip) + sizeof(message) / sizeof(message[0]));
-  ptr = packetBuffer;
-
-  // Put iphdr and data into packet buffer
+// This serializes the iphdr
+unsigned char *serializeIp(struct iphdr ip, unsigned char *ptr) {
   ptr[0] = ip.tos;
   ptr = ptr + 1;
 
@@ -447,15 +454,110 @@ void *sendForwardMessage(int sock, char *vip, char *message)  {
   ptr[2] = ip.daddr >> 8;
   ptr[3] = ip.daddr;
   ptr = ptr + 4;
-  /*
-  memcpy(packetBuffer, (char *)&ip, sizeof(ip));
-  memcpy(packetBuffer + sizeof(ip), (char *)&message, sizeof(message) / sizeof(message[0]));
-  */
 
-  deserializeIPPacket(packetBuffer);
+  return ptr;
+}
 
-  sendMessage(curr->port, curr->address, packetBuffer);
+unsigned char *serializeRIP(unsigned char *ptr) {
+  int i;
 
+  // Packet format
+  uint16_t command; // command will be 1 for request of routing info and 2 for a response
+  uint16_t num_entries; // will not exceed 64 and must be 0 for a request
+  struct {
+    uint32_t cost; // will not exceed 16 -> define infinity to be 16
+    uint32_t address; // IPv4 address
+  } entries[num_entries];
+  command = 2;
+  num_entries = numRoutes;
+  printf("Command: %hu\n", command);
+  printf("Num Entries: %hu\n", num_entries);
+  for(i = 0; i < num_entries; ++i) {
+    entries[i].cost = routingTable[i].cost;
+    printf("Cost %d: %u\n", i, entries[i].cost);
+    inet_pton(AF_INET, routingTable[i].Destination, &entries[i].address);
+    printf("Address %d: %u\n", i, entries[i].address);
+  }
+  ptr[0] = command >> 8;
+  ptr[1] = command;    
+  ptr = ptr + 2;
+
+  ptr[0] = num_entries >> 8;
+  ptr[1] = num_entries;
+  ptr = ptr + 2;
+
+  for(i = 0; i < num_entries; ++i) {
+    ptr[0] = entries[i].cost >> 24;
+    ptr[1] = entries[i].cost >> 16;
+    ptr[2] = entries[i].cost >> 8;
+    ptr[3] = entries[i].cost;
+    ptr = ptr + 4;
+
+    ptr[0] = entries[i].address >> 24;
+    ptr[1] = entries[i].address >> 16;
+    ptr[2] = entries[i].address >> 8;
+    ptr[3] = entries[i].address;
+    ptr = ptr + 4;
+  }
+  return ptr;
+}
+
+// Convert unsigned char * to char
+char *deserializeMessage(unsigned char *ptr, socklen_t fromLen)  {
+  int j;
+  char message[MAX_PACKET_BUFFER_SIZE];
+  for(j = 0; j < fromLen; ++j) {
+    message[j] = ptr[j];
+  }
+  return message;
+}
+
+// This packages data on a high level and feeds it to the sendMessage method
+// This will rely on helper methods for processing the IP header, message
+// content, and RIP information
+void *packageData(int sock, char *vip, char *message, int protocol)  {
+  unsigned char *packetBuffer, *ptr;
+  struct interface *curr = root;
+  struct iphdr ip;
+  // Packet format
+  uint16_t command; // command will be 1 for request of routing info and 2 for a response
+  uint16_t num_entries; // will not exceed 64 and must be 0 for a request
+  struct {
+    uint32_t cost; // will not exceed 16 -> define infinity to be 16
+    uint32_t address; // IPv4 address
+  } entries[num_entries];
+  int size = 0;
+
+  //Test sending messages
+  if(protocol == 0) {
+    ptr = malloc(sizeof(message));
+    packetBuffer = messageConvert(message, ptr);
+    sendMessage(sock, vip, packetBuffer);
+    return NULL;
+  }
+  else if(protocol == 200)  {
+    size = sizeof(ip) + 2*sizeof(uint16_t) + num_entries*sizeof(entries);
+  }
+  else  {
+    size = sizeof(ip) + sizeof(message) / sizeof(message[0]);
+  }
+  packetBuffer = malloc(size);
+  ptr = malloc(size);
+  ptr = packetBuffer;
+  ip = generateIphdr(vip, protocol, size);
+
+  // Put iphdr into packet buffer
+  ptr = serializeIp(ip, ptr);
+
+  // Put RIP info into packet buffer (if needed)
+  if (protocol == 200)  {
+    ptr = serializeRIP(ptr);
+  }
+  //If the package is not meant to be RIP, then it will have a message
+  if (protocol != 200)  {
+    ptr = messageConvert(message, ptr);
+  }
+  sendMessage(sock, vip, packetBuffer);
   return NULL;
 }
 
@@ -463,6 +565,7 @@ void *sendForwardMessage(int sock, char *vip, char *message)  {
 // Will eventually have to read header and handle forwarding
 // Not sure if I should handle RIP packets here or spawn a new thread
 void* handleReceiveMessages () {
+  struct interface *curr = root;
   struct sockaddr_in sin, from;
   socklen_t fromLen = sizeof(from);
   char buf[MAX_TRANSFER_UNIT];
@@ -484,12 +587,85 @@ void* handleReceiveMessages () {
 
   while(1) {
     if (recvfrom(s, buf, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&from, &fromLen) > 0) {
-      //The following should be gibberish if sending happens correctly after IP implementation
-      printf("Received Message: %s\n", buf);
+      int i = 0;
+      unsigned char *ptr = deserializeIPPacket(buf);
+      if(ipReceived.protocol == 0)  {
+        char *message = deserializeMessage(ptr, fromLen);
+        printf("Received Message: %s\n", message);
+      }
+      else if(ipReceived.protocol == 200) {
+
+      }
+      else  {
+        if (ipReceived.daddr != inet_addr(curr->fromAddress))  {
+          puts("need to forward");
+          
+          int sock;
+          if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+            perror("simplex-talk: socket");
+            exit(1);
+          }
+          
+          char *message = deserializeMessage(ptr, fromLen);
+          printf("message: %s\n", message);
+          char addr[INET_ADDRSTRLEN];
+          inet_ntop(AF_INET, &(ipReceived.daddr), addr, INET_ADDRSTRLEN);
+          printf("address: %s\n",addr);
+          packageData(sock, addr, message, 1);
+        }
+        else  {
+          char *message = deserializeMessage(ptr, fromLen);
+          printf("Received: %s\n", message);
+        }
+      }
+
+      /*
+      uint16_t command = 0;
+      command |= buf[i] << 0;
+      command |= buf[i + 1];
+      printf("Deserialized Command: %hu\n", command);
+      
+      if (command == 1 || command == 2) {
+        i = i + 2;
+        uint16_t num_entries = 0;
+        num_entries |= buf[i] << 0;
+        num_entries |= buf[i + 1];
+        i = i + 2;
+        printf("Deserialized Num Entries: %hu\n", num_entries);
+        int j;
+        for(j = 0; j < num_entries; ++j) {
+          uint32_t cost = 0;
+          cost |= buf[i] << 24;
+          cost |= buf[i + 1] << 16;
+          cost |= buf[i + 2] << 8;
+          cost |= buf[i + 3];
+          i = i + 4;
+          printf("Cost %d: %u\n", j, cost);
+          uint32_t address = 0;
+          address |= buf[i] << 24;
+          address |= buf[i + 1] << 16;
+          address |= buf[i + 2] << 8;
+          address |= buf[i + 3];
+          i = i + 4;
+          printf("Address %d: %u\n", j, address);
+        }
+      }
+      else if (command == 0) {
+        // Treat it as a signed char *
+        int j;
+        char deserializedMessage[MAX_PACKET_BUFFER_SIZE];
+        for(j = 0; j < fromLen; ++j) {
+          deserializedMessage[j] = buf[j + 2];
+        }
+        printf("Received Message: %s\n", deserializedMessage);
+      }
+      */
     }
   }
   return NULL;
 }
+
+
 
 // Command line interface for users, supports commands
 int handleUserInput () {
@@ -536,16 +712,22 @@ int handleUserInput () {
       splitMsg = strtok(NULL, " ");
       char *vip = strdup(splitMsg);
       splitMsg = strtok(NULL, "");
-      char *message = strdup(splitMsg);
+      char *tempMessage = strdup(splitMsg);
+      /*
+      // Make command 0
+      unsigned char *message = malloc(sizeof(int) + sizeof(tempMessage));
+      // encode 0 as command
+      uint16_t command = 2;
+      message[0] = command >> 8;
+      message[1] = command;
+      
+      int i = 0;
+      for(i = 0; i < strlen(tempMessage); ++i) {
+        message[i + 2] = tempMessage[i];
+      }
       sendMessage(sock, vip, message);
-    }
-    //Test for IP
-    else if (strcmp(splitMsg, "sendip") == 0) {
-      splitMsg = strtok(NULL, " ");
-      char *vip = strdup(splitMsg);
-      splitMsg = strtok(NULL, "");
-      char *message = strdup(splitMsg);
-      sendForwardMessage(sock, vip, message);
+      */
+      packageData(sock, vip, tempMessage, 1);
     }
     else {
       printf("Invalid Command\n");
@@ -584,7 +766,7 @@ int initializeRoutingTable() {
 
 // Not sure if this should be expanded later to support RIP packets and forwarding
 // It probably should, in which case, we might need to change function signature
-int sendMessage (int sock, char * vip, char * message) {
+int sendMessage (int sock, char * vip, unsigned char * message) {
   int samePort = 0;
   struct interface *curr = root;
   while (curr) {
@@ -606,9 +788,6 @@ int sendMessage (int sock, char * vip, char * message) {
   }
   // Need to send packets encoded with data. The message should be embedded within and then
   // deserialized at the delivery end point
-
-
-
   if (sendto(sock, message, MAX_TRANSFER_UNIT, 0, (struct sockaddr*)&sout, soutLen) < 0) {
     perror("Send error");
   }
@@ -669,7 +848,7 @@ int findPort (char *vip) {
     }
     curr = curr->next;
   }
-  return -1;
+  return root->port;
 }
 
 // Find interface ID for Next Hop
@@ -682,7 +861,9 @@ int findNextHopInterfaceID (char *NextHop) {
     }
     curr = curr->next;
   }
-  return -1;
+  //Default value
+  printf("root interface: %d\n", root->interfaceID);
+  return root->interfaceID;
 }
 
 // Used for debugging
