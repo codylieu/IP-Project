@@ -248,7 +248,6 @@ void* sendRoutingUpdates () {
     // Getting a copy of the payload
     unsigned char* ripbuf, *ripptr;
     ripbuf = malloc(2*sizeof(uint16_t) + num_entries*sizeof(entries));
-    ripptr = malloc(2*sizeof(uint16_t) + num_entries*sizeof(entries));
     ripptr = ripbuf;
     // Adding entries
     ripptr[0] = command >> 8;
@@ -354,6 +353,7 @@ void* sendRoutingUpdates () {
     //   // packageData(0, curr->toAddress, NULL, 200);
     //   curr = curr->next;
     // }
+    free(ripbuf);
     sleep(20);
   }
   return NULL;
