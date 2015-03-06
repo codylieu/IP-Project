@@ -713,7 +713,7 @@ void* handleReceiveMessages () {
           // If so, then you have arrived at your destination! If not, then forward
 
           if (checkDestinationAddress(ipReceived.daddr) == 0)  {
-            printf("need to forward: %s\n", ptr);
+            printf("need to forward: %s\n", strdup((const char *) ptr));
             
             int sock;
             if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
