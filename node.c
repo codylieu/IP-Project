@@ -168,6 +168,7 @@ int main(int argc, char ** argv) {
   pthread_create(&tid[0], NULL, &handleReceiveMessages, NULL);
   pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
   handleUserInput();
+
   // One problem that could happen later is that I only free one instance of builder,
   // but multiple builders were used to create the linkedlist
   free(builder);
@@ -178,11 +179,7 @@ int main(int argc, char ** argv) {
 // Code from the book
 void mergeRoute (Route *new) {
   int i;
-  // printf("NEW DEST: %s\n", new->Destination);
   for (i = 0; i < numRoutes; ++i) {
-    // printf("new Dest: %s\n", new->Destination);
-    // printf("rt Dest: %s\n", routingTable[i].Destination);
-    // printf("Are new and rt dest equql: %d\n", strcmp(new->Destination, routingTable[i].Destination));
     if (strcmp(new->Destination, routingTable[i].Destination) == 0) {
       if (new->cost + 1 < routingTable[i].cost) {
         /* Found a better route: */
@@ -215,7 +212,6 @@ void mergeRoute (Route *new) {
   ++routingTable[i].cost;
 }
 
-// Code from the book
 // After nodes, receive RIP packets from neighbors, call this for each entry to update routing table
 void updateRoutingTable (Route *newRoute, int numNewRoutes) {
   int i;
@@ -232,7 +228,7 @@ void* sendRoutingUpdates () {
       send_rip_packets(2, curr->interfaceID, curr->fromAddress, curr->toAddress);
       curr = curr->next;
     }
-    sleep(10); // Change this to 5 in the final version
+    sleep(5); // Change this to 5 in the final version
   }
   return NULL;
 }
@@ -551,16 +547,6 @@ unsigned char *serializeRIP(unsigned char *ptr) {
   }
   return ptr;
 }
-
-// Convert unsigned char * to char
-// unsigned char *deserializeMessage(unsigned char *ptr, socklen_t fromLen)  {
-//   int j;
-//   char message[MAX_PACKET_BUFFER_SIZE];
-//   for(j = 0; j < fromLen; ++j) {
-//     message[j] = ptr[j];
-//   }
-//   return message;
-// }
 
 // This packages data on a high level and feeds it to the sendMessage method
 // This will rely on helper methods for processing the IP header, message
