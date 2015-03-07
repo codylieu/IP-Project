@@ -978,6 +978,8 @@ void triggerUpdate (char *cmd) {
       if (curr->up == 1) {
         // Change routing table
         printf("Send changed routing table here\n");
+        // After updating routing table
+        // send_rip_packets(2, curr->interfaceID, curr->fromAddress, curr->toAddress);
       }
     }
   }
