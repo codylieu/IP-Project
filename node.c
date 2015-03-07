@@ -12,8 +12,8 @@ void handleUserInput();
 void* handleReceiveMessages();
 int ifconfig();
 int routes();
-int up(char * interfaceID);
-int down(char * interfaceID);
+int up(char * interfaceIDAsString);
+int down(char * interfaceIDAsString);
 int sendMessage(int sock, char * vip, unsigned char * message);
 uint16_t findPort(char *vip);
 void* sendRoutingUpdates();
@@ -25,6 +25,7 @@ int checkDestinationAddress(uint32_t ddaddr);
 char *findSourceVip();
 void send_rip_packets(uint16_t command, int interfaceID, char *fromAddress, char *toAddress);
 void* checkRoutingTableEntries();
+void triggerUpdate();
 
 #define MAX_TRANSFER_UNIT (1400)
 #define MAX_MSG_LENGTH (512)
@@ -746,7 +747,6 @@ void* handleReceiveMessages () {
           }
         }
       }
-      
     }
     sleep(2);
   }
@@ -795,20 +795,39 @@ void handleUserInput () {
       char *vip = strdup(splitMsg);
       splitMsg = strtok(NULL, "");
 
-      // This worked very well, I think it works better than the below method
-      unsigned char *tempMessage = malloc(MAX_TRANSFER_UNIT);
-      memset(tempMessage, 0, sizeof(*tempMessage)); // Not sure if this helps at all
-      tempMessage = (unsigned char *)strdup(splitMsg);
+      // Find next hop address to check if interface is down
+      char *nextHop;
+      int i, j;
+      for (i = 0; i < numRoutes; i++) {
+        if(strcmp(routingTable[i].Destination, vip) == 0) {
+          nextHop = routingTable[i].NextHop;
+          break;
+        }
+      }
+      int sendingInterfaceID = findNextHopInterfaceID(nextHop);
+      struct interface *curr = root;
+      for (j = 0; j < sendingInterfaceID - 1; j++) {
+        curr = curr->next;
+      }
+      if (curr->up == 1) {
+        // This worked very well, I think it works better than the below method
+        unsigned char *tempMessage = malloc(MAX_TRANSFER_UNIT);
+        memset(tempMessage, 0, sizeof(*tempMessage)); // Not sure if this helps at all
+        tempMessage = (unsigned char *)strdup(splitMsg);
 
-      // Not sure if this worked any better than malloc, but it definitely worked better than original
-      // unsigned char tempMessage[MAX_TRANSFER_UNIT];
-      // unsigned char *msgPtr;
-      // msgPtr = tempMessage;
-      // memset(tempMessage, 0, sizeof(tempMessage));
-      // strcpy((char *)msgPtr, strdup(splitMsg));
+        // Not sure if this worked any better than malloc, but it definitely worked better than original
+        // unsigned char tempMessage[MAX_TRANSFER_UNIT];
+        // unsigned char *msgPtr;
+        // msgPtr = tempMessage;
+        // memset(tempMessage, 0, sizeof(tempMessage));
+        // strcpy((char *)msgPtr, strdup(splitMsg));
 
-      packageData(sock, vip, tempMessage, 1);
-      free(tempMessage);
+        packageData(sock, vip, tempMessage, 1);
+        free(tempMessage);
+      }
+      else {
+        printf("Can't send message, interface %d is down.\n", curr->interfaceID);
+      }
     }
     else {
       printf("Invalid Command\n");
@@ -899,25 +918,65 @@ int routes () {
 }
 
 // Up and Down will eventually have to handle triggered updates I think
-int up (char *interfaceID) {
-  if (interfaceID == NULL) {
-    printf("No Interface specified\n");
+int up (char *interfaceIDAsString) {
+  if (interfaceIDAsString == NULL) {
+    printf("No Interface specified.\n");
     return 1;
   }
-  printf("Interface ID: %d\n", atoi(interfaceID));
+  int interfaceID = atoi(interfaceIDAsString);
+  struct interface *curr = root;
+  int i;
+  for (i = 0; i < interfaceID - 1; i++) {
+    if (curr->next == NULL) {
+      printf("Interface %d not found.\n", interfaceID);
+      return 1;
+    }
+    curr = curr->next;
+  }
+  if (curr->up == 0) {
+    curr->up = 1;
+    printf("Interface %d up.\n", interfaceID);
+    triggerUpdate();
+  }
+  else {
+    printf("Interface %d is already up.\n", interfaceID);
+  }
+
   return 1;
 }
 
-int down (char *interfaceID) {
-  if (interfaceID == NULL) {
-    printf("No Interface specified\n");
+int down (char *interfaceIDAsString) {
+  if (interfaceIDAsString == NULL) {
+    printf("No Interface specified.\n");
     return 1;
   }
-  printf("Interface ID: %d\n", atoi(interfaceID));
+  int interfaceID = atoi(interfaceIDAsString);
+  struct interface *curr = root;
+  int i;
+  for(i = 0; i < interfaceID - 1; i++) {
+    if (curr->next == NULL) {
+      printf("Interface %d not found.\n", interfaceID);
+      return 1;
+    }
+    curr = curr->next;
+  }
+  if (curr->up == 1) {
+    curr->up = 0;
+    printf("Interface %d down.\n", interfaceID);
+    triggerUpdate();
+  }
+  else {
+    printf("Interface %d is already down.\n", interfaceID);
+  }
+
   return 1;
 }
 
 /* Helper functions */
+
+void triggerUpdate () {
+
+}
 
 //Find source vip
 char *findSourceVip() {
