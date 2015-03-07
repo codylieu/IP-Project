@@ -24,6 +24,7 @@ void *packageData(int sock, char *vip, unsigned char *message, int protocol);
 int checkDestinationAddress(uint32_t ddaddr);
 char *findSourceVip();
 void send_rip_packets(uint16_t command, int interfaceID, char *fromAddress, char *toAddress);
+void* checkRoutingTableEntries();
 
 #define MAX_TRANSFER_UNIT (1400)
 #define MAX_MSG_LENGTH (512)
@@ -32,6 +33,7 @@ void send_rip_packets(uint16_t command, int interfaceID, char *fromAddress, char
 #define MAX_TTL 120 /* time (in seconds) until route expires */
 #define MAX_PACKET_BUFFER_SIZE 64000
 #define MAX_COST 16; /* Define 16 to be infinity */
+#define RTE_TTL 12; /* Routing Table Entry TTL is 12 seconds */
 
 char *address;
 uint16_t port;
@@ -46,7 +48,7 @@ struct interface {
 };
 struct interface *root;
 
-pthread_t tid[2];
+pthread_t tid[3];
 
 typedef struct {
   char *Destination; /* address of destination */
@@ -80,6 +82,7 @@ struct deserializedTuple {
   struct iphdr ipReceived;
   unsigned char * deserializedPacketPtr;
 };
+int sleepVal;
 
 // Create a make file that compiles with "gcc -pthread -o node node.c" for Ubuntu
 int main(int argc, char ** argv) {
@@ -167,6 +170,7 @@ int main(int argc, char ** argv) {
 
   pthread_create(&tid[0], NULL, &handleReceiveMessages, NULL);
   pthread_create(&tid[1], NULL, &sendRoutingUpdates, NULL);
+  pthread_create(&tid[2], NULL, &checkRoutingTableEntries, NULL);
   handleUserInput();
 
   // One problem that could happen later is that I only free one instance of builder,
@@ -176,17 +180,48 @@ int main(int argc, char ** argv) {
   exit(EXIT_SUCCESS);
 }
 
+// Gets rid of entries if they expire
+void* checkRoutingTableEntries () {
+  while (1) {
+    // Check all routing table entries and decrement by 1
+    // Discard if TTL reaches 0
+    int i = 0;
+    while (i < numRoutes) {
+      routingTable[i].TTL--;
+      if (routingTable[i].TTL == 0) { // discard i
+        int j;
+        for (j = i; j < numRoutes - 1; ++j) {
+          routingTable[j] = routingTable[j + 1];
+        }
+        numRoutes--;
+        i--;
+      }
+      i++;
+    }
+    sleep(1);
+  }
+  return NULL;
+}
+
 // Code from the book
 void mergeRoute (Route *new) {
   int i;
   for (i = 0; i < numRoutes; ++i) {
     if (strcmp(new->Destination, routingTable[i].Destination) == 0) {
-      if (new->cost + 1 < routingTable[i].cost) {
+      if (routingTable[i].cost == 0) {
+        routingTable[i].TTL = RTE_TTL;
+        return;
+      }
+      else if (new->cost + 1 < routingTable[i].cost) {
         /* Found a better route: */
         break;
       }
       else if (strcmp(new->NextHop, routingTable[i].NextHop) == 0) {
         /* Metric for current next-hop may have changed: */
+        if (new->cost + 1 >= routingTable[i].cost) {
+          routingTable[i].TTL = RTE_TTL;
+          return;   
+        }
         break;
       }
       else {
@@ -207,7 +242,7 @@ void mergeRoute (Route *new) {
   }
   routingTable[i] = *new;
   /* Reset TTL */
-  routingTable[i].TTL = MAX_TTL;
+  routingTable[i].TTL = RTE_TTL;
   /* Account for hop to get to next node */
   ++routingTable[i].cost;
 }
@@ -439,15 +474,6 @@ void send_rip_packets (uint16_t command, int interfaceID, char *fromAddress, cha
   free(ripbuf);
   free(packetBuffer);
 }
-
-// This converts char * into unsigned char
-// unsigned char *messageConvert(unsigned char *message, unsigned char *ptr) {
-//   int i = 0;
-//   for(i = 0; i < strlen((const char *)message); ++i) {
-//     ptr[i] = message[i];
-//   }
-//   return ptr;
-// }
 
 // This serializes the iphdr
 unsigned char *serializeIp(char *vip, int protocol, int size, unsigned char *ptr, unsigned char * message) {
@@ -689,7 +715,7 @@ void* handleReceiveMessages () {
               newRoutes[j].Destination = strdup(dest);
               newRoutes[j].NextHop = strdup(nextHop);
               newRoutes[j].cost = cost;
-              newRoutes[j].TTL = MAX_TTL;
+              newRoutes[j].TTL = RTE_TTL;
             }
             printf("==========================================\n");
             updateRoutingTable(newRoutes, num_entries);
@@ -701,7 +727,7 @@ void* handleReceiveMessages () {
           // If so, then you have arrived at your destination! If not, then forward
 
           if (checkDestinationAddress(ipReceived.daddr) == 0)  {
-            printf("need to forward: %s\n", ptr));
+            printf("need to forward: %s\n", ptr);
             
             int sock;
             if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
@@ -800,7 +826,7 @@ int initializeRoutingTable() {
     fromRoute->Destination = strdup(curr->fromAddress);
     fromRoute->NextHop = strdup(curr->fromAddress);
     fromRoute->cost = 0;
-    fromRoute->TTL = MAX_TTL;
+    fromRoute->TTL = RTE_TTL;
     routingTable[numRoutes] = *fromRoute;
     numRoutes++;
 
@@ -808,12 +834,12 @@ int initializeRoutingTable() {
     toRoute->Destination = strdup(curr->toAddress);
     toRoute->NextHop = strdup(curr->toAddress);
     toRoute->cost = 1;
-    toRoute->TTL = MAX_TTL;
+    toRoute->TTL = RTE_TTL;
     routingTable[numRoutes] = *toRoute;
     numRoutes++;
 
     curr = curr->next;
-    free(fromRoute);
+    // free(fromRoute);
     free(toRoute);
   }
   return 1;
