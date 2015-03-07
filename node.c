@@ -768,9 +768,23 @@ void handleUserInput () {
       splitMsg = strtok(NULL, " ");
       char *vip = strdup(splitMsg);
       splitMsg = strtok(NULL, "");
-      unsigned char *tempMessage = (unsigned char *)strdup(splitMsg);
+      // This didn't work that well
+      // unsigned char *tempMessage = (unsigned char *)strdup(splitMsg);
+
+      // This worked very well, I think it works better than the below method
+      unsigned char *tempMessage = malloc(MAX_TRANSFER_UNIT);
+      // memset(tempMessage, 0, sizeof(*tempMessage));
+      tempMessage = (unsigned char *)strdup(splitMsg);
+
+      // Not sure if this worked any better than malloc, but it definitely worked better than original
+      // unsigned char tempMessage[MAX_TRANSFER_UNIT];
+      // unsigned char *msgPtr;
+      // msgPtr = tempMessage;
+      // memset(tempMessage, 0, sizeof(tempMessage));
+      // strcpy((char *)msgPtr, strdup(splitMsg));
 
       packageData(sock, vip, tempMessage, 1);
+      free(tempMessage);
     }
     else {
       printf("Invalid Command\n");
