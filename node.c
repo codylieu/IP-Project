@@ -974,11 +974,12 @@ void triggerUpdate (char *cmd) {
   }
   else {
     // Send routing table to all non down interfaces
-    // while (curr) {
-    //   if (curr->up == 1) {
-
-    //   }
-    // }
+    while (curr) {
+      if (curr->up == 1) {
+        // Change routing table
+        printf("Send changed routing table here\n");
+      }
+    }
   }
 }
 
