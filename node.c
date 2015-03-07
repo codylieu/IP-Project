@@ -445,13 +445,11 @@ struct deserializedTuple deserializeIPPacket(unsigned char * packetBuffer) {
 void send_rip_packets (uint16_t command, int interfaceID, char *fromAddress, char *toAddress) {
   int i, j;
   uint16_t num_entries;
-  if (command == 1) {
-    // Routing request
-    num_entries = numRoutes;
-  }
-  else if (command == 2) {
-    // Routing response
+  if (command == 1) { // Routing request
     num_entries = 0;
+  }
+  else if (command == 2) { // Routing response
+    num_entries = numRoutes;
   }
   struct {
     uint32_t cost;
@@ -470,11 +468,13 @@ void send_rip_packets (uint16_t command, int interfaceID, char *fromAddress, cha
   unsigned char *packetBuffer, *tempPtr;
   packetBuffer = malloc(sizeof(struct iphdr) + 2*sizeof(uint16_t) + 2*num_entries*sizeof(uint32_t));
   tempPtr = packetBuffer;
+
   // Need to get copy of the payload in order for checksum to work properly
   // Getting a copy of the payload
   unsigned char* ripbuf, *ripptr;
   ripbuf = malloc(2*sizeof(uint16_t) + 2*num_entries*sizeof(uint32_t));
   ripptr = ripbuf;
+  
   // Adding entries
   ripptr[0] = command >> 8;
   ripptr[1] = command;    
@@ -483,6 +483,7 @@ void send_rip_packets (uint16_t command, int interfaceID, char *fromAddress, cha
   ripptr[0] = num_entries >> 8;
   ripptr[1] = num_entries;
   ripptr = ripptr + 2;
+  
   for(j = 0; j < num_entries; ++j) {
     ripptr[0] = entries[j].cost >> 24;
     ripptr[1] = entries[j].cost >> 16;
@@ -553,9 +554,6 @@ void send_rip_packets (uint16_t command, int interfaceID, char *fromAddress, cha
   tempPtr[1] = num_entries;
   tempPtr = tempPtr + 2;
 
-  // This shit broke code before when it was commented
-  // printf("num_entries: %d\n", num_entries);
-
   for(j = 0; j < num_entries; ++j) {
     tempPtr[0] = entries[j].cost >> 24;
     tempPtr[1] = entries[j].cost >> 16;
@@ -568,14 +566,6 @@ void send_rip_packets (uint16_t command, int interfaceID, char *fromAddress, cha
     tempPtr[2] = entries[j].address >> 8;
     tempPtr[3] = entries[j].address;
     uint32_t address = 0;
-
-    // address |= tempPtr[0] << 24;
-    // address |= tempPtr[1] << 16;
-    // address |= tempPtr[2] << 8;
-    // address |= tempPtr[3];
-    // printf("=================================\n");
-    // printf("Received address %u\n", address);
-    // printf("=================================\n");
     tempPtr = tempPtr + 4;
   }
   sendMessage(0, toAddress, packetBuffer);
@@ -798,15 +788,16 @@ void* handleReceiveMessages () {
           printf("==========================================\n");
           printf("RECEIVED: Deserialized Command: %hu\n", command);
           
-          if (command == 1) {
-            // This is a request from another node, send back a response
-            // send_rip_packets(2);
-
+          if (command == 1) { // This is a request from another node, send back a response
+            printf("Received a request, need to send a response\n");
+            char fromAddress[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &(ipReceived.saddr), fromAddress, INET_ADDRSTRLEN);
+            char toAddress[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &(ipReceived.daddr), toAddress, INET_ADDRSTRLEN);
+            int interfaceID = findNextHopInterfaceID(fromAddress);
+            send_rip_packets(2, interfaceID, toAddress, fromAddress);
           }
-          else if (command == 2) {
-            // This is a response, do the normal shit with it
-            // if (command == 1 || command == 2) {
-              // Format everything to a Route and then call update routes
+          else if (command == 2) { // This is a response, call updateRoutingTable
             i = i + 2;
             uint16_t num_entries = 0;
             num_entries |= ptr[i] << 8;
@@ -867,7 +858,6 @@ void* handleReceiveMessages () {
             packageData(sock, addr, ptr, 1);
           }
           else  {
-            // unsigned char *message = deserializeMessage(ptr, fromLen);
             printf("Received: %s\n", ptr);
           }
         }
