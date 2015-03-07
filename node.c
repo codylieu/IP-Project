@@ -186,13 +186,14 @@ void* checkRoutingTableEntries () {
   while (1) {
     // Check all routing table entries and decrement by 1
     // Discard if TTL reaches 0
-    int i = 0;
-    while (i < numRoutes) {
-      routingTable[i].TTL--;
-      if (routingTable[i].TTL == 0) { // discard i
-        routingTable[i].cost = MAX_COST;
+    int i;
+    for (i = 0; i < numRoutes; i++) {
+      if (routingTable[i].TTL > 0) {
+        routingTable[i].TTL--;
       }
-      i++;
+      else if (routingTable[i].TTL == 0) {
+        routingTable[i].cost = MAX_COST; // Set it equal to 16
+      }
     }
     sleep(1);
   }
@@ -774,8 +775,7 @@ void handleUserInput () {
       ifconfig();      
     }
     // Documentation is unclear on whether command is "routes" or "route"
-    else if (strcmp(splitMsg, "routes") == 0 ||
-             strcmp(splitMsg, "route") == 0) {
+    else if (strcmp(splitMsg, "routes") == 0) {
       routes();
     }
     else if (strcmp(splitMsg, "up") == 0) {
@@ -806,17 +806,9 @@ void handleUserInput () {
         curr = curr->next;
       }
       if (curr->up == 1) {
-        // This worked very well, I think it works better than the below method
         unsigned char *tempMessage = malloc(MAX_TRANSFER_UNIT);
         memset(tempMessage, 0, sizeof(*tempMessage)); // Not sure if this helps at all
         tempMessage = (unsigned char *)strdup(splitMsg);
-
-        // Not sure if this worked any better than malloc, but it definitely worked better than original
-        // unsigned char tempMessage[MAX_TRANSFER_UNIT];
-        // unsigned char *msgPtr;
-        // msgPtr = tempMessage;
-        // memset(tempMessage, 0, sizeof(tempMessage));
-        // strcpy((char *)msgPtr, strdup(splitMsg));
 
         packageData(sock, vip, tempMessage, 1);
         free(tempMessage);
@@ -937,7 +929,6 @@ int up (char *interfaceIDAsString) {
   else {
     printf("Interface %d is already up.\n", interfaceID);
   }
-
   return 1;
 }
 
@@ -971,18 +962,22 @@ int down (char *interfaceIDAsString) {
 /* Helper functions */
 
 void triggerUpdate (char *cmd) {
+  struct interface *curr = root;
   if (strcmp(cmd, "up") == 0) {
-    // send request packet only through the interface that came back up(?) or to all non down interfaces
-    // send_rip_packets(1, (*curr)->interfaceID, (*curr)->fromAddress, (*curr)->toAddress);
+    // Send request packet to all non down interfaces
+    while (curr) {
+      if (curr->up == 1) {
+        send_rip_packets(1, curr->interfaceID, curr->fromAddress, curr->toAddress);
+      }
+      curr = curr->next;
+    }
   }
   else {
-    // send routing table to all non down interfaces
-    // int i;
-    // char *fromAddress = (*curr)->fromAddress;
-    // for (i = 0; i < numRoutes; i++) {
-      // if (strcmp(fromAddress, routingTable[i].)) {
+    // Send routing table to all non down interfaces
+    // while (curr) {
+    //   if (curr->up == 1) {
 
-      // }
+    //   }
     // }
   }
 }
