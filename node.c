@@ -768,8 +768,6 @@ void handleUserInput () {
       splitMsg = strtok(NULL, " ");
       char *vip = strdup(splitMsg);
       splitMsg = strtok(NULL, "");
-      // This didn't work that well
-      // unsigned char *tempMessage = (unsigned char *)strdup(splitMsg);
 
       // This worked very well, I think it works better than the below method
       unsigned char *tempMessage = malloc(MAX_TRANSFER_UNIT);
