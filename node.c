@@ -119,7 +119,7 @@ int main(int argc, char ** argv) {
   // Creates linked list of interfaces
   int interfaceID = 1;
   while ((read = getline(&line, &len, fp)) != -1) {
-    builder = (struct interface *) malloc(sizeof(struct interface));
+    builder = (struct interface *) malloc(100*sizeof(struct interface));
     builder->interfaceID = interfaceID;
     interfaceID++;
 
@@ -190,12 +190,7 @@ void* checkRoutingTableEntries () {
     while (i < numRoutes) {
       routingTable[i].TTL--;
       if (routingTable[i].TTL == 0) { // discard i
-        int j;
-        for (j = i; j < numRoutes - 1; ++j) {
-          routingTable[j] = routingTable[j + 1];
-        }
-        numRoutes--;
-        i--;
+        routingTable[i].cost = MAX_COST;
       }
       i++;
     }
@@ -600,7 +595,8 @@ void *packageData(int sock, char *vip, unsigned char *message, int protocol)  {
     size = sizeof(struct iphdr) + 2*sizeof(uint16_t) + num_entries*sizeof(entries);
   }
   else  {
-    size = sizeof(struct iphdr) + sizeof(message);
+    // size = sizeof(struct iphdr) + sizeof(message);
+    size = sizeof(struct iphdr) + MAX_TRANSFER_UNIT;
   }
   packetBuffer = malloc(size);
   ptr = packetBuffer;
@@ -858,7 +854,7 @@ int initializeRoutingTable() {
     numRoutes++;
 
     curr = curr->next;
-    // free(fromRoute);
+    free(fromRoute);
     free(toRoute);
   }
   return 1;
@@ -936,7 +932,7 @@ int up (char *interfaceIDAsString) {
   if (curr->up == 0) {
     curr->up = 1;
     printf("Interface %d up.\n", interfaceID);
-    triggerUpdate();
+    triggerUpdate("up");
   }
   else {
     printf("Interface %d is already up.\n", interfaceID);
@@ -963,7 +959,7 @@ int down (char *interfaceIDAsString) {
   if (curr->up == 1) {
     curr->up = 0;
     printf("Interface %d down.\n", interfaceID);
-    triggerUpdate();
+    triggerUpdate("down");
   }
   else {
     printf("Interface %d is already down.\n", interfaceID);
@@ -974,8 +970,21 @@ int down (char *interfaceIDAsString) {
 
 /* Helper functions */
 
-void triggerUpdate () {
+void triggerUpdate (char *cmd) {
+  if (strcmp(cmd, "up") == 0) {
+    // send request packet only through the interface that came back up(?) or to all non down interfaces
+    // send_rip_packets(1, (*curr)->interfaceID, (*curr)->fromAddress, (*curr)->toAddress);
+  }
+  else {
+    // send routing table to all non down interfaces
+    // int i;
+    // char *fromAddress = (*curr)->fromAddress;
+    // for (i = 0; i < numRoutes; i++) {
+      // if (strcmp(fromAddress, routingTable[i].)) {
 
+      // }
+    // }
+  }
 }
 
 //Find source vip
